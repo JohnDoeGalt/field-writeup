@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Field Write-Up</title>
+  <meta name="description" content="Offline service write-ups for field techs">
+  <meta name="theme-color" content="#1e293b">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Write-Up">
+  <style>
+    :root {
+      --bg: #f4f5f7; --card: #fff; --ink: #111827; --muted: #5b6474; --line: #d4d8df;
+      --brand: #1e293b; --primary: #1d4ed8; --primary-ink: #fff;
+      --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f141b; --card: #18202b; --ink: #e8ecf2; --muted: #9aa4b2; --line: #2c3746;
+        --brand: #0b1220; --primary: #3b82f6; --ok: #4ade80; --ok-bg: #12301f; --warn: #fbbf24; --warn-bg: #3a2a07;
+        --bad: #f87171; --bad-bg: #3b1212; color-scheme: dark;
+      }
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    .top {
+      position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: calc(env(safe-area-inset-top) + 8px) 12px 8px; background: var(--brand); color: #fff;
+    }
+    .top h1 { font-size: 18px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .top .btn.ghost { color: #fff; border-color: transparent; }
+    .top .muted { color: #cbd5e1; }
+    main { padding: 12px 16px 120px; max-width: 720px; margin: 0 auto; }
+    h2 { font-size: 16px; margin: 22px 0 8px; display: flex; align-items: center; gap: 8px; }
+    section[data-section] { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 4px 14px 14px; margin: 14px 0; }
+    .count { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+    .count.ok { color: var(--ok); background: var(--ok-bg); }
+    .count.warn { color: var(--warn); background: var(--warn-bg); }
+    .field { display: block; margin: 12px 0; }
+    .label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+    .row { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+    .row > input, .row > select, .row > textarea { flex: 1 1 200px; min-width: 0; }
+    input, select, textarea {
+      width: 100%; font: inherit; color: var(--ink); background: var(--card);
+      border: 1.5px solid var(--line); border-radius: 8px; padding: 11px 12px; min-height: 48px;
+    }
+    textarea { resize: vertical; }
+    input:disabled, select:disabled, textarea:disabled { opacity: .65; }
+    input:focus, select:focus, textarea:focus { outline: 3px solid color-mix(in srgb, var(--primary) 40%, transparent); border-color: var(--primary); }
+    .field.invalid > .row > input, .field.invalid > .row > select, .field.invalid > .row > textarea,
+    .field.invalid > input, .field.invalid > canvas { border-color: var(--bad); background: var(--bad-bg); }
+    .err { color: var(--bad); font-size: 14px; font-weight: 600; min-height: 0; margin-top: 4px; }
+    .err:empty { display: none; }
+    .check { display: flex; align-items: center; gap: 8px; font-size: 15px; margin-top: 8px; min-height: 40px; }
+    .check input { width: 24px; height: 24px; min-height: 0; }
+    .na { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .na .na-reason { flex: 1 1 200px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-weight: 600;
+      min-height: 48px; padding: 0 16px; border-radius: 10px; border: 1.5px solid var(--line);
+      background: var(--card); color: var(--ink); text-decoration: none; cursor: pointer;
+    }
+    .btn.small { min-height: 48px; padding: 0 12px; font-size: 15px; }
+    .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); }
+    .btn.warn { background: var(--warn-bg); border-color: var(--warn); color: var(--warn); }
+    .btn.ghost { background: transparent; }
+    .btn.danger { color: var(--bad); margin-top: 24px; }
+    .btn.big { width: 100%; min-height: 56px; font-size: 18px; margin: 8px 0; }
+    .linkish { all: unset; cursor: pointer; display: block; padding: 10px 0; }
+    .home .jobs { list-style: none; padding: 0; margin: 0; }
+    .home .jobs a {
+      display: grid; gap: 2px; padding: 12px 14px; margin-bottom: 8px; background: var(--card);
+      border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none;
+    }
+    .home .jobs span { color: var(--muted); font-size: 14px; }
+    .badge { justify-self: start; font-size: 12px !important; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--line); }
+    .badge.warn { color: var(--warn) !important; background: var(--warn-bg); }
+    .badge.ok { color: var(--ok) !important; background: var(--ok-bg); }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+    .note { background: var(--warn-bg); padding: 10px 12px; border-radius: 8px; }
+    .bar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; padding: 8px 16px calc(env(safe-area-inset-bottom) + 8px);
+      background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-top: 1px solid var(--line);
+    }
+    .bar:empty { display: none; }
+    .bar .btn.big { max-width: 720px; display: flex; margin: 0 auto; }
+    .banner { background: var(--ok-bg); color: var(--ink); padding: 12px 16px; }
+    .banner p { margin: 0 0 8px; font-weight: 600; }
+    .part { border: 1px dashed var(--line); border-radius: 10px; padding: 4px 12px; margin: 10px 0; }
+    .part-head { display: flex; justify-content: space-between; align-items: center; }
+    .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+    .thumbs figure { margin: 0; display: grid; gap: 4px; }
+    .thumbs img { width: 120px; height: 90px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+    .sigpad { display: block; width: 100%; max-width: 600px; aspect-ratio: 600 / 180; height: auto; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; touch-action: none; }
+    .sheet {
+      position: fixed; inset: auto 0 0 0; z-index: 20; max-height: 75vh; overflow: auto; background: var(--card);
+      border-top-left-radius: 16px; border-top-right-radius: 16px; padding: 12px 16px calc(env(safe-area-inset-bottom) + 16px);
+      box-shadow: 0 -10px 40px rgba(0, 0, 0, .35);
+    }
+    .sheet-head { display: flex; justify-content: space-between; align-items: center; position: sticky; top: -12px; background: var(--card); padding: 4px 0; }
+    .sheet ul { padding-left: 18px; }
+    .toast {
+      position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 30; max-width: calc(100% - 32px);
+      background: #111827; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 15px;
+    }
+    .settings .btn { margin: 6px 0; }
+    .install { background: var(--card); border: 2px solid var(--primary); border-radius: 14px; padding: 6px 16px 14px; margin: 14px 0; }
+    .install h2 { font-size: 20px; }
+    .install.compact h2 { font-size: 17px; }
+    .steps { list-style: none; padding: 0; margin: 8px 0; display: grid; gap: 10px; }
+    .step { display: flex; gap: 12px; align-items: flex-start; font-size: 18px; }
+    .install.compact .step { font-size: 16px; }
+    .step .num {
+      flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: var(--primary-ink);
+      display: grid; place-items: center; font-weight: 700;
+    }
+    label.btn input[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="app"><p style="padding:16px">Loading…</p></div>
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
