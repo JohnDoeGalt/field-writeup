@@ -2,8 +2,8 @@
 // Updates arrive on their own (see fetch); bump VERSION only to force a clean re-cache.
 const VERSION = 'fw-v1';
 const FILES = [
-  './', './index.html', './app.js', './schema.js', './validate.js', './store.js', './report.js',
-  './vendor/jspdf.umd.min.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
+  './', './index.html', './app.js', './schema.js', './validate.js', './store.js', './report.js', './package.js', './ui.js', './install.js', './media.js', './transfer.js', './office.js',
+  './vendor/fflate.min.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {

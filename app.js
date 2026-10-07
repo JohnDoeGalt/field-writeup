@@ -1,105 +1,57 @@
-import { SECTIONS, PART_COLUMNS, PHOTO_SLOTS, SIGNATURES, allFields, newJob } from './schema.js';
-import { validateJob, computed, normalizeVin, vinProblem } from './validate.js';
+import { SECTIONS, PART_COLUMNS, PART_RECEIPT, PHOTO_SLOTS, SIGNATURES, allFields, newJob } from './schema.js';
+import { validateJob, computed, normalizeVin, vinProblem, unitContext, jobContext, woKey, lengthHint } from './validate.js';
 import * as store from './store.js';
-import { buildPdf, buildCsv, fileBase } from './report.js';
+import { selectForExport } from './package.js';
+import { $app, h, mount, toast, ask, pad, localDateTime, hooks } from './ui.js';
+import { isStandalone, isIOS, browserOk, installGuide, renderInstallGate } from './install.js';
+import { shrinkPhoto, setupSigPad } from './media.js';
+import { exportPackage, removeExported, exportBackup, restoreBackup } from './transfer.js';
+import { renderOffice, renderOfficeJob } from './office.js';
 
-const $app = document.getElementById('app');
-
-// Tiny DOM helper. Text always goes through textContent, so typed data can't inject HTML.
-function h(tag, props = {}, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (v == null || v === false) continue;
-    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (k === 'class') el.className = v;
-    else if (k === 'text') el.textContent = v;
-    else if (k in el && k !== 'list') el[k] = v;
-    else el.setAttribute(k, v === true ? '' : v);
-  }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : document.createTextNode(kid));
-  return el;
-}
-
-// Top-level render. Drops `cond && node` placeholders that h() would otherwise never see.
-const mount = (...nodes) => $app.replaceChildren(...nodes.flat().filter((n) => n != null && n !== false));
-
-// Validation context from job history: highest odometer previously recorded for this unit.
-function unitContext(job, jobs) {
-  const unit = job.values.unit_number?.trim();
-  if (!unit) return {};
-  const prior = jobs.filter((j) => j.id !== job.id && j.values.unit_number?.trim() === unit && /^\d+$/.test(j.values.unit_mileage || ''))
-    .map((j) => +j.values.unit_mileage);
-  return { lastUnitMileage: prior.length ? Math.max(...prior) : null };
-}
-
-const pad = (n) => String(n).padStart(2, '0');
-const localDateTime = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-
-function toast(msg) {
-  const t = h('div', { class: 'toast', role: 'status', text: msg });
-  document.body.append(t);
-  setTimeout(() => t.remove(), 2600);
-}
-
-// ---------- install guide ----------
-// An iPhone keeps a Home Screen app's data apart from Safari's, so jobs typed in a Safari
-// tab would never show up in the installed app. On iPhone the guide comes first.
-const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-const isIOSSafari = () => isIOS() && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA/.test(navigator.userAgent);
-let installPrompt = null; // Android/Chrome one-tap install
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  installPrompt = e;
-  if (!location.hash.startsWith('#/job')) route();
-});
-const browserOk = () => { try { return sessionStorage.getItem('browserOk') === '1'; } catch { return false; } };
-
-function step(n, text) {
-  return h('li', { class: 'step' }, h('span', { class: 'num', text: String(n) }), h('span', { text }));
-}
-
-function installGuide(compact) {
-  const ios = isIOS();
-  const steps = ios
-    ? (isIOSSafari()
-      ? [step(1, 'Tap the Share button ⬆️ (a square with an arrow).'), step(2, 'Scroll down. Tap "Add to Home Screen" ➕.'), step(3, 'Tap "Add".'), step(4, 'Go to your Home Screen. Tap the Write-Up icon 📋.')]
-      : [step(1, 'This is not Safari. Copy this page link.'), step(2, 'Open Safari 🧭 and paste the link.'), step(3, 'Then follow the steps you see there.')])
-    : [step(1, 'Tap the 3 dots ⋮ at the top.'), step(2, 'Tap "Install app" or "Add to Home screen".'), step(3, 'Tap "Install".'), step(4, 'Tap the new Write-Up icon 📋.')];
-  return h('section', { class: `install ${compact ? 'compact' : ''}` },
-    h('h2', { text: '📲 Put this app on your phone' }),
-    installPrompt && h('button', {
-      class: 'btn primary big',
-      text: 'Install app',
-      onclick: async () => { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; route(); },
-    }),
-    h('p', { class: 'muted', text: installPrompt ? 'Or do it by hand:' : 'Do this one time:' }),
-    h('ol', { class: 'steps' }, steps),
-    ios && h('p', { class: 'note', text: 'Always use the app icon. Jobs typed in Safari do not show up in the app.' }));
-}
-
-function renderInstallGate() {
-  mount(
-    h('header', { class: 'top' }, h('h1', { text: 'Write-Up 📋' })),
-    h('main', {},
-      installGuide(false),
-      h('button', {
-        class: 'btn ghost',
-        text: 'Skip, use it in the browser',
-        onclick: () => { try { sessionStorage.setItem('browserOk', '1'); } catch { /* private mode */ } route(); },
-      })));
-}
 
 // ---------- routing ----------
 window.addEventListener('hashchange', route);
 async function route() {
+  try {
+    await showRoute();
+  } catch (e) {
+    console.error(e);
+    mount(h('main', {},
+      h('p', { class: 'note', text: 'Oops. Something went wrong on this screen. Your saved jobs are safe.' }),
+      h('a', { class: 'btn primary big', href: '#/', text: 'Go to my jobs' })));
+  }
+}
+
+async function showRoute() {
+  closeEditor();
+  const [, view, id, jobId] = location.hash.split('/');
+  // The office computer needs no tech setup and no phone install guide.
+  if (view === 'office') return id === 'job' && jobId ? renderOfficeJob(decodeURIComponent(jobId)) : renderOffice();
   if (isIOS() && !isStandalone() && !browserOk()) return renderInstallGate();
   const settings = await store.getSettings();
-  const [, view, id] = location.hash.split('/');
   if (!settings.techName && view !== 'settings') { location.hash = '#/settings'; return; }
   if (view === 'job' && id) return renderEditor(id, settings);
   if (view === 'settings') return renderSettings(settings);
   return renderHome(settings);
+}
+
+// B-09: finished write-ups that sat unsent for 12+ hours get a loud reminder with one tap to send.
+const UNSENT_AFTER_MS = 12 * 3600e3;
+function unsentBanner(settings, jobs) {
+  const late = jobs.filter((j) => j.status === 'complete' && Date.now() - Date.parse(j.completed_at || j.updated_at) > UNSENT_AFTER_MS);
+  if (!late.length) return null;
+  return h('div', { class: 'note unsent', role: 'alert' },
+    h('p', {}, h('strong', { text: `⚠️ ${late.length === 1 ? '1 write-up is' : `${late.length} write-ups are`} done but not sent to the office yet.` })),
+    h('button', { class: 'btn primary big', type: 'button', text: 'Send now', onclick: () => exportPackage(settings.exportMode === 'since-last' ? 'since-last' : 'everything', settings) }));
+}
+
+// The Export button(s) the techs see, per the exportMode setting (FR-15).
+function exportButtons(settings, jobs) {
+  if (!jobs.length) return [];
+  const fresh = selectForExport(jobs, 'since-last').length;
+  const all = h('button', { class: 'btn big', onclick: () => exportPackage('everything', settings), text: `📦 Send all my jobs to the office (${jobs.length})` });
+  const since = h('button', { class: 'btn big', onclick: () => exportPackage('since-last', settings), text: `📦 Send my new jobs to the office (${fresh})` });
+  return { everything: [all], 'since-last': [since], both: [since, all] }[settings.exportMode] || [all];
 }
 
 // ---------- home ----------
@@ -110,15 +62,17 @@ async function renderHome(settings) {
     ['complete', 'Ready to send'],
     ['sent', 'Sent'],
   ];
-  const unsent = jobs.filter((j) => j.status === 'complete');
   mount(
     h('header', { class: 'top' },
       h('h1', { text: 'Write-ups' }),
-      h('a', { class: 'btn ghost', href: '#/settings', text: 'Settings' })),
+      h('span', {},
+        h('a', { class: 'btn ghost', href: '#/office', text: 'Office' }),
+        h('a', { class: 'btn ghost', href: '#/settings', text: 'Settings' }))),
     h('main', { class: 'home' },
       !isStandalone() && installGuide(true),
       h('button', { class: 'btn primary big', onclick: () => createJob(settings), text: '+ New write-up' }),
-      unsent.length > 1 && h('button', { class: 'btn big', onclick: () => sendJobs(unsent, settings), text: `Send all ${unsent.length} ready to the office` }),
+      unsentBanner(settings, jobs),
+      ...exportButtons(settings, jobs),
       jobs.length === 0 && h('p', { class: 'muted', text: 'No write-ups yet. Everything you enter is saved on this phone, no signal needed.' }),
       ...groups.map(([status, title]) => {
         const list = jobs.filter((j) => j.status === status);
@@ -131,7 +85,7 @@ async function renderHome(settings) {
 
 function jobRow(job, jobs) {
   const v = job.values;
-  const missing = job.status === 'draft' ? validateJob(job, unitContext(job, jobs)).length : 0;
+  const missing = job.status === 'draft' ? validateJob(job, jobContext(job, jobs)).length : 0;
   return h('li', {},
     h('a', { href: `#/job/${job.id}` },
       h('strong', { text: v.company_name || 'New job' }),
@@ -160,6 +114,7 @@ function renderSettings(settings) {
     h('main', { class: 'settings' },
       !settings.techName && !isStandalone() && installGuide(true),
       !settings.techName && h('p', { class: 'note', text: '👋 Hi! Do this one time. Type your name and the office email. Then tap Save.' }),
+      !settings.techName && h('a', { class: 'btn big', href: '#/office', text: '🖥 At the office computer? Open the Office view' }),
       input('techName', 'Your name', { autocomplete: 'name', required: true }),
       input('officeEmail', 'Office email (your jobs go here)', { type: 'email', inputmode: 'email' }),
       input('woPrefix', 'Letters for work order numbers (you can skip this)', { placeholder: 'e.g. RA' }),
@@ -173,15 +128,37 @@ function renderSettings(settings) {
         },
       }),
       h('h2', { text: 'Backup' }),
-      h('p', { class: 'muted', text: 'Write-ups live only on this phone. Export a backup now and then (e.g. email it to yourself).' }),
-      h('button', { class: 'btn', onclick: exportBackup, text: 'Export backup (all data)' }),
-      h('button', { class: 'btn', onclick: exportCsvAll, text: 'Export spreadsheet (CSV, all jobs)' }),
-      h('label', { class: 'btn' }, 'Restore from backup…',
-        h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: (e) => restoreBackup(e.target.files[0]) }))));
+      h('p', { class: 'muted', text: 'Your jobs live only on this phone. Save a backup now and then (email it to yourself).' }),
+      h('button', { class: 'btn', onclick: exportBackup, text: 'Save a backup (all jobs)' }),
+      h('label', { class: 'btn' }, 'Bring jobs back from a backup…',
+        h('input', { type: 'file', accept: '.zip,application/zip,.json,application/json', hidden: true, onchange: (e) => restoreBackup(e.target.files[0]) })),
+      h('button', { class: 'btn', onclick: removeExported, text: 'Remove jobs already sent' }),
+      // FR-15: which Export button(s) techs see. Set once by the boss; kept out of the way.
+      h('details', { class: 'admin' },
+        h('summary', { text: 'For the boss: Send button' }),
+        h('label', { class: 'field' },
+          h('span', { class: 'label', text: 'What the send button sends' }),
+          h('select', { onchange: async (e) => { s.exportMode = e.target.value; await store.saveSettings({ ...settings, exportMode: s.exportMode }); toast('Saved'); } },
+            [['everything', 'All jobs on the phone (one button)'], ['since-last', 'Only new jobs since last send (one button)'], ['both', 'Show both buttons']]
+              .map(([v, t]) => h('option', { value: v, text: t, selected: (settings.exportMode || 'everything') === v })))))));
 }
 
 // ---------- editor ----------
+// The open editor's exit. Called before any other screen is drawn, so an old editor can
+// never write its stale copy of a job over newer data (A-01).
+let leaveEditor = null;
+function closeEditor() {
+  const leave = leaveEditor;
+  leaveEditor = null;
+  leave?.();
+}
+
+function saveFailed() {
+  toast('Could not save! Your phone may be full. Free up some space.');
+}
+
 async function renderEditor(id, settings) {
+  closeEditor();
   const job = await store.getJob(id);
   if (!job) { location.hash = '#/'; return; }
   const others = (await store.listJobs()).filter((j) => j.id !== id);
@@ -190,11 +167,29 @@ async function renderEditor(id, settings) {
   let saveTimer;
   const locked = job.status !== 'draft';
 
-  const save = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => store.saveJob(job), 300); };
-  const flush = () => { clearTimeout(saveTimer); return store.saveJob(job); };
-  document.onvisibilitychange = () => { if (document.hidden) flush(); };
+  // Saving (A-01): only write when something changed, and stop for good once the tech leaves
+  // this editor — otherwise this stale copy could overwrite a delete or a later "Sent".
+  let dirty = false;
+  let closed = false;
+  const write = () => store.saveJob(job).catch(saveFailed);
+  const save = () => {
+    dirty = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { dirty = false; if (!closed) write(); }, 300);
+  };
+  const flush = async () => {
+    clearTimeout(saveTimer);
+    if (dirty && !closed) { dirty = false; await write(); }
+  };
+  const onHide = () => { if (document.hidden) flush(); };
+  document.addEventListener('visibilitychange', onHide);
+  leaveEditor = () => {
+    flush();
+    closed = true;
+    document.removeEventListener('visibilitychange', onHide);
+  };
 
-  const ctx = () => unitContext(job, others);
+  const ctx = () => jobContext(job, others);
 
   // Re-show error text and the bottom bar without rebuilding inputs (keeps focus/keyboard).
   function refresh() {
@@ -217,6 +212,20 @@ async function renderEditor(id, settings) {
     const override = $app.querySelector('.vin-override');
     if (override) {
       override.hidden = !job.vin_override && !vinProblem(job.values.vin || '')?.startsWith('VIN check digit');
+    }
+    const odo = $app.querySelector('.odo-confirm');
+    if (odo) {
+      const { lastUnitMileage } = ctx();
+      odo.hidden = job.odo_confirm == null && !(lastUnitMileage != null && /^\d+$/.test(job.values.unit_mileage || '') && +job.values.unit_mileage < lastUnitMileage);
+    }
+    for (const el of $app.querySelectorAll('[data-linetotal]')) {
+      const p = job.parts[+el.dataset.linetotal] || {};
+      el.textContent = `Line total: ${p.qty || 0} × $${(+p.price || 0).toFixed(2)} = $${((+p.qty || 0) * (+p.price || 0)).toFixed(2)}`;
+    }
+    for (const el of $app.querySelectorAll('[data-hint]')) {
+      const hint = lengthHint(allFields().find((x) => x.id === el.dataset.hint), job.values[el.dataset.hint]);
+      el.textContent = hint.text;
+      el.className = `hint ${hint.ok ? 'ok' : ''}`;
     }
     const c = computed(job);
     $app.querySelector('#totals').textContent = [
@@ -263,7 +272,9 @@ async function renderEditor(id, settings) {
     if (probs.length) { attempted = true; refresh(); showMissing(probs); return; }
     job.status = 'complete';
     job.completed_at = new Date().toISOString();
-    await flush();
+    clearTimeout(saveTimer);
+    dirty = false;
+    await write();
     renderEditor(id, settings);
     toast('Write-up complete. Send it to the office.');
   }
@@ -271,7 +282,17 @@ async function renderEditor(id, settings) {
   // --- field widgets ---
   function fieldEl(f) {
     const isNA = job.na[f.id] != null;
-    const set = (val) => { job.values[f.id] = val; touched.add(f.id); save(); refresh(); };
+    const set = (val) => {
+      if (f.id === 'vin' && job.vin_override && val !== job.values.vin) {
+        job.vin_override = false; // A-15: a new VIN must pass on its own
+        const box = $app.querySelector('.vin-override input');
+        if (box) box.checked = false;
+      }
+      job.values[f.id] = val;
+      touched.add(f.id);
+      save();
+      refresh();
+    };
     let input;
     const common = { id: `in-${f.id}`, disabled: locked || isNA, onblur: () => { touched.add(f.id); refresh(); } };
     if (f.type === 'textarea') {
@@ -290,7 +311,12 @@ async function renderEditor(id, settings) {
         ...common, type: f.type, value: job.values[f.id] || '', ...extra,
         list: { company_name: 'dl-company', unit_number: 'dl-unit' }[f.id],
         autocapitalize: f.id === 'vin' || f.id === 'plate' ? 'characters' : extra.autocapitalize,
-        oninput: (e) => set(e.target.value),
+        maxlength: { vin: 17, plate: 10 }[f.kind],
+        oninput: (e) => {
+          // VIN: capitals, no spaces/dashes, as they type, so the 17-count is honest.
+          if (f.kind === 'vin') { const nv = normalizeVin(e.target.value); if (nv !== e.target.value) e.target.value = nv; }
+          set(e.target.value);
+        },
         onchange: (e) => onPick(f.id, e.target.value),
       });
     }
@@ -300,7 +326,12 @@ async function renderEditor(id, settings) {
       if (f.id === 'wo_number') helpers.push(h('button', { class: 'btn small', type: 'button', text: 'Auto', onclick: () => {
         const d = new Date();
         const initials = (settings.woPrefix || settings.techName.split(/\s+/).map((w) => w[0]).join('')).toUpperCase();
-        input.value = `${initials}-${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+        const base = `${initials}-${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+        // B-08: never hand out a number another job on this phone already has.
+        const taken = new Set(others.map((j) => woKey(j.values.wo_number)));
+        let n = 1;
+        while (taken.has(woKey(n === 1 ? base : `${base}-${n}`))) n++;
+        input.value = n === 1 ? base : `${base}-${n}`;
         set(input.value);
       } }));
       if (f.type === 'datetime-local') helpers.push(h('button', { class: 'btn small', type: 'button', text: 'Now', onclick: () => { input.value = localDateTime(); set(input.value); } }));
@@ -310,26 +341,42 @@ async function renderEditor(id, settings) {
     const wrap = h('div', { class: 'field', 'data-key': f.id },
       h('label', { class: 'label', for: `in-${f.id}`, text: f.label }),
       h('div', { class: 'row' }, input, ...helpers),
+      // B-19: live length counter (VIN 12/17, phone 7/10, plate 2–8) so a missed character shows at once.
+      lengthHint(f, '') && !locked && !isNA && h('div', { class: 'hint', 'data-hint': f.id, 'aria-live': 'polite' }),
       h('div', { class: 'err', 'aria-live': 'polite' }));
+    if (f.id === 'unit_mileage' && !locked && !isNA) {
+      // A-05: a lower reading than last time can be confirmed with a reason, never a dead end.
+      const confirmed = job.odo_confirm != null;
+      wrap.append(h('div', { class: 'odo-confirm', hidden: true },
+        h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: confirmed, onchange: (e) => { if (e.target.checked) job.odo_confirm = ''; else delete job.odo_confirm; save(); rerender(); } }),
+          ' The reading is right (odometer replaced, or last time was a mistake)'),
+        confirmed && h('input', { class: 'na-reason', placeholder: 'Why? (required)', value: job.odo_confirm, 'aria-label': 'Why is the reading lower?', oninput: (e) => { job.odo_confirm = e.target.value; save(); refresh(); } })));
+    }
 
     if (f.id === 'vin' && !locked) {
       wrap.append(h('label', { class: 'check vin-override', hidden: true },
         h('input', { type: 'checkbox', checked: !!job.vin_override, onchange: (e) => { job.vin_override = e.target.checked; save(); refresh(); } }),
         ' Check digit fails but I double-checked it against the plate (needs VIN plate photo)'));
     }
-    if (f.na && !locked) wrap.append(naToggle(f.id, isNA, job.na, () => rerender()));
+    if (f.na && !locked) wrap.append(naToggle(f.id, isNA, job.na, () => rerender(), f.id, f.label));
     else if (isNA) wrap.append(h('div', { class: 'muted', text: `N/A: ${job.na[f.id]}` }));
-    return wrap;
+    // Photos that prove this field sit right under it (FR-10).
+    const photos = PHOTO_SLOTS.filter((s) => s.for === f.id).map(slotWidget);
+    return photos.length ? h('div', { class: 'with-photos' }, wrap, ...photos) : wrap;
   }
 
-  function naToggle(key, isNA, bag, after) {
+  function naToggle(key, isNA, bag, after, touchKey = key, label = '') {
     const box = h('div', { class: 'na' },
       h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: isNA, onchange: (e) => { if (e.target.checked) bag[key] = ''; else delete bag[key]; touched.add(key); save(); after(); } }),
+        h('input', {
+          type: 'checkbox', checked: isNA, 'aria-label': `${label} not applicable`, // A-26: 18 boxes all said just "N/A"
+          onchange: (e) => { if (e.target.checked) bag[key] = ''; else delete bag[key]; touched.add(touchKey); save(); after(); },
+        }),
         ' N/A'));
     if (isNA) {
       box.append(h('input', {
-        class: 'na-reason', placeholder: 'Why? (required)', value: bag[key],
+        class: 'na-reason', placeholder: 'Why? (required)', value: bag[key], 'aria-label': `Why is ${label} N/A?`,
         oninput: (e) => { bag[key] = e.target.value; save(); refresh(); },
       }));
     }
@@ -337,23 +384,33 @@ async function renderEditor(id, settings) {
   }
 
   // Picking a known company/unit fills the rest, so repeat customers are a couple of taps.
+  // Writes values into the existing inputs instead of re-rendering: `change` fires as the
+  // tech taps the NEXT field, and a rebuild there would wipe what they start typing.
+  function setInPlace(k, val) {
+    job.values[k] = val;
+    const el = $app.querySelector(`#in-${CSS.escape(k)}`);
+    if (el) el.value = val;
+  }
+
   function onPick(fieldId, value) {
     const v = value.trim();
     const fillFrom = (src, ids) => {
       let filled = false;
-      for (const k of ids) if (!job.values[k] && src.values[k]) { job.values[k] = src.values[k]; filled = true; }
-      if (filled) { save(); rerender(); toast('Filled from a previous job'); }
+      for (const k of ids) if (!job.values[k] && src.values[k]) { setInPlace(k, src.values[k]); filled = true; }
+      if (filled) { save(); refresh(); toast('Filled from a previous job'); }
     };
     if (fieldId === 'company_name') {
       const src = others.find((j) => j.values.company_name?.trim().toLowerCase() === v.toLowerCase());
       if (src) fillFrom(src, ['contact_name', 'phone', 'email']);
     }
     if (fieldId === 'unit_number') {
-      const src = others.find((j) => j.values.unit_number?.trim() === v
-        && (!job.values.company_name || j.values.company_name === job.values.company_name));
-      if (src) fillFrom(src, ['company_name', 'contact_name', 'phone', 'email', 'plate', 'state', 'vin']);
+      // A-05: unit numbers repeat across customers, so only fill from the SAME company.
+      const company = job.values.company_name?.trim().toLowerCase();
+      const src = company && others.find((j) => j.values.unit_number?.trim().toLowerCase() === v.toLowerCase()
+        && j.values.company_name?.trim().toLowerCase() === company);
+      if (src) fillFrom(src, ['plate', 'state', 'vin']);
     }
-    if (fieldId === 'vin') { job.values.vin = normalizeVin(value); save(); rerender(); }
+    if (fieldId === 'vin') { setInPlace('vin', normalizeVin(value)); save(); refresh(); }
   }
 
   function captureGps(btn) {
@@ -381,7 +438,12 @@ async function renderEditor(id, settings) {
               ...(c.type === 'number' ? { inputmode: 'decimal' } : {}),
               oninput: (e) => { p[c.id] = e.target.value; touched.add(`part-${i}-${c.id}`); save(); refresh(); },
             }),
-            h('div', { class: 'err' })))));
+            h('div', { class: 'err' }))),
+          h('p', { class: 'line-total', 'data-linetotal': i, 'aria-live': 'polite' }),
+          photoWidget({
+            key: `part-${i}-receipt`, label: `Part ${i + 1}: ${PART_RECEIPT.label.toLowerCase()}`,
+            list: (p.receipt_photos ||= []), multiple: true, naBag: p, naKey: 'receipt_na',
+          })));
       });
       if (!locked) box.append(h('button', { class: 'btn', type: 'button', text: '+ Add part', onclick: () => { job.parts.push({}); save(); rerender(); } }));
     }
@@ -396,33 +458,52 @@ async function renderEditor(id, settings) {
     return box;
   }
 
-  function photosSection() {
-    const partsUsed = !job.no_parts && job.parts.length > 0;
-    return h('div', {}, PHOTO_SLOTS.filter((s) => !s.whenParts || partsUsed).map((s) => {
-      const list = job.photos[s.id] || [];
-      const isNA = job.photo_na[s.id] != null;
-      const key = `photo-${s.id}`;
-      const wrap = h('div', { class: 'field photo-slot', 'data-key': key },
-        h('span', { class: 'label', text: `Photo: ${s.label}` }),
-        h('div', { class: 'thumbs' }, list.map((src, i) => h('figure', {},
-          h('img', { src, alt: `${s.label} ${i + 1}` }),
-          !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Remove', onclick: () => { list.splice(i, 1); save(); rerender(); } })))),
-        !locked && !isNA && (s.multiple || list.length === 0) && h('label', { class: 'btn' },
-          list.length ? '+ Another photo' : '📷 Take photo',
-          h('input', {
-            type: 'file', accept: 'image/*', capture: 'environment', hidden: true, multiple: !!s.multiple,
-            onchange: async (e) => {
-              for (const file of e.target.files) list.push(await shrinkPhoto(file));
-              job.photos[s.id] = list;
-              touched.add(key);
-              save();
-              rerender();
-            },
-          })),
-        h('div', { class: 'err' }));
-      if (s.na !== false && !locked && list.length === 0) wrap.append(naToggle(s.id, isNA, job.photo_na, () => rerender()));
-      return wrap;
-    }));
+  // One photo prompt, shown inside the block (or part line) it proves. `list` is the array
+  // the photos live in; `naBag[naKey]` holds an N/A reason when one is allowed.
+  function photoWidget({ key, label, list, multiple, naBag, naKey }) {
+    const isNA = naBag && naBag[naKey] != null;
+    const wrap = h('div', { class: 'field photo-slot', 'data-key': key },
+      h('span', { class: 'label', text: `📷 ${label}` }),
+      h('div', { class: 'thumbs' }, list.map((src, i) => h('figure', {},
+        h('img', { src, alt: `${label} ${i + 1}` }),
+        !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Remove', onclick: () => { list.splice(i, 1); save(); rerender(); } })))),
+      !locked && !isNA && (multiple || list.length === 0) && h('label', { class: 'btn' },
+        list.length ? '+ Another photo' : 'Take photo',
+        h('input', {
+          // A-12: no `capture`, so phones offer Take Photo OR Photo Library (pictures taken
+          // earlier with the Camera app can still be attached).
+          type: 'file', accept: 'image/*', hidden: true, multiple: !!multiple,
+          'aria-label': `${label}: take photo`,
+          onchange: async (e) => {
+            for (const file of [...e.target.files]) {
+              try {
+                list.push(await shrinkPhoto(file)); // added one by one: a bad file never loses the good ones (A-21)
+              } catch {
+                toast('That photo could not be read. Try another one.');
+              }
+            }
+            touched.add(key);
+            if (closed) {
+              // A-08: the tech left while the photo was processing. Keep the photo, but never
+              // redraw this editor over the screen they're on now (or bring back a deleted job).
+              if (await store.getJob(job.id)) await store.saveJob(job).catch(saveFailed);
+              return;
+            }
+            save();
+            rerender();
+          },
+        })),
+      h('div', { class: 'err' }));
+    if (naBag && !locked && list.length === 0) wrap.append(naToggle(naKey, isNA, naBag, () => rerender(), key, label));
+    return wrap;
+  }
+
+  function slotWidget(s) {
+    job.photos[s.id] ||= [];
+    return photoWidget({
+      key: `photo-${s.id}`, label: s.label, list: job.photos[s.id], multiple: s.multiple,
+      naBag: s.na === false ? null : job.photo_na, naKey: s.id,
+    });
   }
 
   function signaturesSection() {
@@ -434,7 +515,9 @@ async function renderEditor(id, settings) {
         canvas,
         !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Clear', onclick: () => { delete job.signatures[s.id]; save(); rerender(); } }),
         h('div', { class: 'err' }));
-      setupSigPad(canvas, job.signatures[s.id], locked, (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); refresh(); });
+      setupSigPad(canvas, job.signatures[s.id], locked,
+        (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); refresh(); },
+        () => toast('Keep going. Sign a bit bigger.'));
       return wrap;
     }));
   }
@@ -451,7 +534,7 @@ async function renderEditor(id, settings) {
     const units = [...new Set(others.map((j) => j.values.unit_number).filter(Boolean))];
     mount(
       h('header', { class: 'top' },
-        h('a', { class: 'btn ghost', href: '#/', onclick: flush, text: '‹ Jobs' }),
+        h('a', { class: 'btn ghost', href: '#/', text: '‹ Jobs' }),
         h('h1', { text: job.values.wo_number || 'Write-up' }),
         h('span', { id: 'totals', class: 'muted small' })),
       h('datalist', { id: 'dl-company' }, companies.map((c) => h('option', { value: c }))),
@@ -459,20 +542,47 @@ async function renderEditor(id, settings) {
       locked && h('div', { class: 'banner' },
         h('p', { text: job.status === 'sent' ? `Sent ${new Date(job.sent_at).toLocaleString()}` : 'Complete. Send it to the office.' }),
         h('div', { class: 'row' },
-          h('button', { class: 'btn primary', text: job.status === 'sent' ? 'Send again' : 'Send to office', onclick: () => sendJobs([job], settings) }),
-          h('button', { class: 'btn', text: 'View PDF', onclick: () => viewPdf(job) }),
-          h('button', { class: 'btn ghost', text: 'Reopen to edit', onclick: async () => { job.status = 'draft'; await flush(); renderEditor(id, settings); } }))),
+          h('button', {
+            class: 'btn primary',
+            text: '📦 Send my jobs to the office',
+            onclick: () => exportPackage(settings.exportMode === 'since-last' ? 'since-last' : 'everything', settings),
+          }),
+          h('button', {
+            class: 'btn ghost',
+            text: 'Reopen to edit',
+            onclick: async () => {
+              // A-22: signatures approved the old version, so changing it means signing again.
+              const ok = await ask('Reopen this write-up?', 'The signatures will be cleared. The customer and you must sign again before it is complete.', [
+                { label: 'Reopen and clear signatures', value: true, primary: true },
+                { label: 'Cancel', value: false },
+              ]);
+              if (!ok) return;
+              job.status = 'draft';
+              job.signatures = {};
+              job.revision = (job.revision || 1) + 1;
+              await write();
+              renderEditor(id, settings);
+            },
+          }))),
       h('main', { class: 'editor' },
         SECTIONS.map((s) => h('section', { 'data-section': s.id },
           h('h2', {}, s.title, ' ', h('span', { class: 'count' })),
           s.fields ? allF.filter((f) => f.section === s.id).map(fieldEl)
             : s.special === 'parts' ? partsSection()
-              : s.special === 'photos' ? photosSection()
-                : signaturesSection())),
+              : signaturesSection())),
+        (job.photos.unassigned || []).length > 0 && h('section', { class: 'note' },
+          h('strong', { text: 'Older receipt photos (not matched to a part)' }),
+          h('div', { class: 'thumbs' }, job.photos.unassigned.map((src) => h('img', { src, alt: 'Older receipt photo' })))),
         !locked && h('button', {
           class: 'btn ghost danger', type: 'button', text: 'Delete this write-up',
           onclick: async (e) => {
-            if (e.target.dataset.armed) { await store.deleteJob(job.id); location.hash = '#/'; return; }
+            if (e.target.dataset.armed) {
+              closed = true; // nothing from this editor may write the job back (A-01)
+              clearTimeout(saveTimer);
+              await store.deleteJob(job.id);
+              location.hash = '#/';
+              return;
+            }
             e.target.dataset.armed = '1';
             e.target.textContent = 'Tap again to delete permanently';
           },
@@ -484,147 +594,11 @@ async function renderEditor(id, settings) {
   build();
 }
 
-// ---------- photos & signatures ----------
-async function loadImage(file) {
-  try {
-    return await createImageBitmap(file, { imageOrientation: 'from-image' });
-  } catch {
-    // Older iOS Safari: fall back to an <img>, which also honours EXIF orientation.
-    const url = URL.createObjectURL(file);
-    try {
-      const img = new Image();
-      img.src = url;
-      await img.decode();
-      return img;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-}
 
-async function shrinkPhoto(file, max = 1600) {
-  const bmp = await loadImage(file);
-  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-  const c = document.createElement('canvas');
-  c.width = Math.round(bmp.width * scale);
-  c.height = Math.round(bmp.height * scale);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.72);
-}
-
-function setupSigPad(canvas, existing, locked, onDone) {
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#fff';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.lineWidth = 3;
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = '#111';
-  if (existing) {
-    const img = new Image();
-    img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    img.src = existing;
-  }
-  if (locked) return;
-  let drawing = false;
-  let inked = false;
-  const pt = (e) => {
-    const r = canvas.getBoundingClientRect();
-    return [(e.clientX - r.left) * (canvas.width / r.width), (e.clientY - r.top) * (canvas.height / r.height)];
-  };
-  canvas.addEventListener('pointerdown', (e) => {
-    drawing = true;
-    canvas.setPointerCapture(e.pointerId);
-    ctx.beginPath();
-    ctx.moveTo(...pt(e));
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    if (!drawing) return;
-    ctx.lineTo(...pt(e));
-    ctx.stroke();
-    inked = true;
-  });
-  const end = () => {
-    if (!drawing) return;
-    drawing = false;
-    if (inked) onDone(canvas.toDataURL('image/png'));
-  };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
-}
-
-// ---------- sending ----------
-async function sendJobs(jobs, settings) {
-  const files = jobs.map((j) => new File([buildPdf(j)], `${fileBase(j)}.pdf`, { type: 'application/pdf' }));
-  const stamp = new Date().toISOString().slice(0, 10);
-  files.push(new File([buildCsv(jobs)], `WriteUps_${settings.techName.replace(/\W+/g, '_')}_${stamp}.csv`, { type: 'text/csv' }));
-  const subject = jobs.length === 1
-    ? `Write-up ${jobs[0].values.wo_number}: ${jobs[0].values.company_name}`
-    : `${jobs.length} write-ups from ${settings.techName} (${stamp})`;
-  const text = `${subject}\nSent from the Field Write-Up app by ${settings.techName}.`;
-
-  let sent = false;
-  if (navigator.canShare?.({ files })) {
-    try {
-      await navigator.share({ files, title: subject, text });
-      sent = true;
-    } catch (e) {
-      if (e.name === 'AbortError') return; // tech cancelled the share sheet
-    }
-  }
-  if (!sent) {
-    // No file sharing (e.g. desktop): download the files and open a pre-addressed email.
-    files.forEach(download);
-    location.href = `mailto:${encodeURIComponent(settings.officeEmail || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text}\n\nAttach the downloaded files: ${files.map((f) => f.name).join(', ')}`)}`;
-    sent = true;
-  }
-  const now = new Date().toISOString();
-  for (const j of jobs) { j.status = 'sent'; j.sent_at = now; await store.saveJob(j); }
-  toast(jobs.length === 1 ? 'Marked as sent' : `${jobs.length} write-ups marked as sent`);
-  route();
-}
-
-function download(file) {
-  const a = h('a', { href: URL.createObjectURL(file), download: file.name });
-  document.body.append(a);
-  a.click();
-  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
-}
-
-function viewPdf(job) {
-  download(new File([buildPdf(job)], `${fileBase(job)}.pdf`, { type: 'application/pdf' }));
-}
-
-// ---------- backup ----------
-async function exportBackup() {
-  const data = { app: 'field-writeup', version: 1, exported_at: new Date().toISOString(), settings: await store.getSettings(), jobs: await store.listJobs() };
-  const file = new File([JSON.stringify(data)], `FieldWriteUp_backup_${data.exported_at.slice(0, 10)}.json`, { type: 'application/json' });
-  if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: 'Write-up backup' }); return; } catch (e) { if (e.name === 'AbortError') return; }
-  }
-  download(file);
-}
-
-async function exportCsvAll() {
-  const jobs = await store.listJobs();
-  download(new File([buildCsv(jobs)], `WriteUps_all_${new Date().toISOString().slice(0, 10)}.csv`, { type: 'text/csv' }));
-}
-
-async function restoreBackup(file) {
-  if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    if (data.app !== 'field-writeup' || !Array.isArray(data.jobs)) throw new Error('not a backup');
-    const existing = new Set((await store.listJobs()).map((j) => j.id));
-    let added = 0;
-    for (const j of data.jobs) if (!existing.has(j.id)) { await store.saveJob(j); added++; }
-    toast(`Restored ${added} write-up(s); ${data.jobs.length - added} already on this phone`);
-    location.hash = '#/';
-  } catch {
-    toast('That file is not a Field Write-Up backup');
-  }
-}
 
 // ---------- boot ----------
+hooks.route = route;
+hooks.closeEditor = closeEditor;
 store.requestPersistence();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 route();

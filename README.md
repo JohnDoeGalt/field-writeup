@@ -44,7 +44,20 @@ Always open the app with the **icon**. Do not use Safari for your jobs.
 5. Look at the big button at the bottom.
    - 🟨 **Yellow** = something is missing. Tap it. It shows you what to fix.
    - 🟦 **Blue** = all done! Tap it.
-6. Tap **Send to office**. Pick **Mail** ✉️. Tap **Send**.
+6. Go back to your jobs. Tap **📦 Send all my jobs to the office**.
+7. Pick **Mail** ✉️ (or Dropbox). Send it to the office.
+
+---
+
+## 4. At the office (on the computer) 🖥
+
+1. Open the app link on the computer.
+2. Click **Office**.
+3. Drag the file from the email onto the big box.
+4. All the jobs show up in one list. Click a job to see it, with its photos.
+5. Click **Print** to print a job or the whole list.
+
+Sending the same jobs twice is OK. The office list never doubles them.
 
 ---
 
