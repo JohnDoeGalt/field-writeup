@@ -4,7 +4,7 @@ import * as store from './store.js';
 import { selectForExport } from './package.js';
 import { $app, h, mount, toast, ask, pad, localDateTime, hooks } from './ui.js';
 import { isStandalone, isIOS, browserOk, installGuide, renderInstallGate } from './install.js';
-import { shrinkPhoto, setupSigPad } from './media.js';
+import { shrinkPhoto, setupSigPad, openBigPad } from './media.js';
 import { lookupAddress, ATTRIBUTION } from './geo.js';
 import { FORMATTERS, KEY_CHARS, formatMoney, formatMoneyOnLeave, caretAfter, countKeyChars } from './format.js';
 import { exportPackage, removeExported, exportBackup, restoreBackup } from './transfer.js';
@@ -627,7 +627,17 @@ async function renderEditor(id, settings) {
       const wrap = h('div', { class: 'field', 'data-key': key },
         h('span', { class: 'label', text: s.label }),
         canvas,
-        !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Clear', onclick: () => { delete job.signatures[s.id]; save(); rerender(); } }),
+        !locked && h('div', { class: 'row' },
+          // FR-18: sign big, sideways, without the tiny box.
+          h('button', {
+            class: 'btn small', type: 'button', text: '⤢ Enlarge',
+            onclick: () => openBigPad({
+              label: s.label,
+              onSave: (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); rerender(); },
+              onTooSmall: () => toast('Keep going. Sign a bit bigger.'),
+            }),
+          }),
+          h('button', { class: 'btn ghost small', type: 'button', text: 'Clear', onclick: () => { delete job.signatures[s.id]; save(); rerender(); } })),
         h('div', { class: 'err' }));
       setupSigPad(canvas, job.signatures[s.id], locked,
         (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); refresh(); },
@@ -729,7 +739,9 @@ if ('serviceWorker' in navigator) {
     hadVersion = true;
   });
   navigator.serviceWorker.register('./sw.js').then((reg) => {
-    // Look for a new version whenever the app comes back to the screen.
+    // Look for a new version every time the app opens and whenever it comes back to the
+    // screen — don't rely on the browser's own (irregular) checks.
+    reg.update().catch(() => {});
     document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
   }).catch(() => {});
 }
