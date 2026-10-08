@@ -1,4 +1,4 @@
-import { SECTIONS, PART_COLUMNS, PART_RECEIPT, PHOTO_SLOTS, SIGNATURES, allFields, newJob } from './schema.js';
+import { SECTIONS, PART_COLUMNS, PART_RECEIPT, PHOTO_SLOTS, SIGNATURES, allFields, newJob, clientName } from './schema.js';
 import { validateJob, computed, normalizeVin, vinProblem, unitContext, jobContext, woKey, lengthHint } from './validate.js';
 import * as store from './store.js';
 import { selectForExport } from './package.js';
@@ -90,7 +90,7 @@ function jobRow(job, jobs) {
   const missing = job.status === 'draft' ? validateJob(job, jobContext(job, jobs)).length : 0;
   return h('li', {},
     h('a', { href: `#/job/${job.id}` },
-      h('strong', { text: v.company_name || 'New job' }),
+      h('strong', { text: job.nickname || clientName(job) || 'New job' }), // S19: the tech's nickname first
       h('span', { text: [v.wo_number, v.unit_number && `Unit ${v.unit_number}`, v.date].filter(Boolean).join(' · ') }),
       job.status === 'draft' && h('span', { class: 'badge warn', text: `${missing} missing` }),
       job.status === 'complete' && h('span', { class: 'badge ok', text: 'Complete, not sent' }),
@@ -399,9 +399,13 @@ async function renderEditor(id, settings) {
       if (f.id === 'address') helpers.push(h('button', { class: 'btn small', type: 'button', text: '📍 Use my location', onclick: (e) => captureGps(e.target) }));
     }
 
+    // S20: N/A sits right beside its box; the "Why?" box appears underneath when ticked.
+    const na = f.na && !locked ? naToggle(f.id, isNA, job.na, () => rerender(), f.id, f.label) : null;
     const wrap = h('div', { class: 'field', 'data-key': f.id },
       h('label', { class: 'label', for: `in-${f.id}`, text: f.label }),
-      h('div', { class: 'row' }, input, ...helpers),
+      // N/A goes straight after the box, so on a narrow phone it is the helper buttons that wrap.
+      h('div', { class: 'row' }, input, na?.querySelector('.na-check'), ...helpers),
+      na?.querySelector('.na-reason'),
       // B-19: live length counter (VIN 12/17, phone 7/10, plate 2–8) so a missed character shows at once.
       lengthHint(f, '') && !locked && !isNA && h('div', { class: 'hint', 'data-hint': f.id, 'aria-live': 'polite' }),
       h('div', { class: 'err', 'aria-live': 'polite' }));
@@ -420,8 +424,7 @@ async function renderEditor(id, settings) {
         h('input', { type: 'checkbox', checked: !!job.vin_override, onchange: (e) => { job.vin_override = e.target.checked; save(); refresh(); } }),
         ' Check digit fails but I double-checked it against the plate (needs VIN plate photo)'));
     }
-    if (f.na && !locked) wrap.append(naToggle(f.id, isNA, job.na, () => rerender(), f.id, f.label));
-    else if (isNA) wrap.append(h('div', { class: 'muted', text: `N/A: ${job.na[f.id]}` }));
+    if (isNA && locked) wrap.append(h('div', { class: 'muted', text: `N/A: ${job.na[f.id]}` }));
     if (f.id === 'address') { const g = gpsConfirm(); if (g) wrap.append(g); }
     // Photos that prove this field sit right under it (FR-10).
     const photos = PHOTO_SLOTS.filter((s) => s.for === f.id).map(slotWidget);
@@ -430,7 +433,7 @@ async function renderEditor(id, settings) {
 
   function naToggle(key, isNA, bag, after, touchKey = key, label = '') {
     const box = h('div', { class: 'na' },
-      h('label', { class: 'check' },
+      h('label', { class: 'check na-check' },
         h('input', {
           type: 'checkbox', checked: isNA, 'aria-label': `${label} not applicable`, // A-26: 18 boxes all said just "N/A"
           onchange: (e) => { if (e.target.checked) bag[key] = ''; else delete bag[key]; touched.add(touchKey); save(); after(); },
@@ -689,6 +692,14 @@ async function renderEditor(id, settings) {
             },
           }))),
       h('main', { class: 'editor' },
+        // S19: a name the tech picks so the job list says more than "New job". Not checked;
+        // it is only a label, so it can still be changed after the job is finished.
+        h('div', { class: 'field nickname' },
+          h('label', { class: 'label', for: 'in-nickname', text: 'Nickname (just for you)' }),
+          h('input', {
+            id: 'in-nickname', type: 'text', value: job.nickname || '', placeholder: 'Like "Big Red tow truck"',
+            oninput: (e) => { job.nickname = e.target.value.trim() ? e.target.value : undefined; save(); },
+          })),
         SECTIONS.map((s) => h('section', { 'data-section': s.id },
           h('h2', {}, s.title, ' ', h('span', { class: 'count' })),
           s.fields ? allF.filter((f) => f.section === s.id).map(fieldEl)

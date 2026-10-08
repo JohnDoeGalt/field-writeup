@@ -2,7 +2,7 @@
 // sheet, open a job's report with each photo beside the box it proves, print, export CSV.
 // Runs in the same app on the office computer; everything stays on that computer.
 import * as store from './store.js';
-import { SECTIONS, PHOTO_SLOTS, SIGNATURES, allFields } from './schema.js';
+import { SECTIONS, PHOTO_SLOTS, SIGNATURES, allFields, clientName } from './schema.js';
 import { computed } from './validate.js';
 import { buildCsv, money } from './report.js';
 import { mergePlan } from './package.js';
@@ -18,7 +18,7 @@ const photoCount = (j) => Object.values(j.photos).reduce((n, a) => n + a.length,
 const COLS = [
   ['date', 'Date', (j) => j.values.date || ''],
   ['wo', 'WO #', (j) => j.values.wo_number || ''],
-  ['company', 'Company', (j) => j.values.company_name || ''],
+  ['company', 'Client', clientName],
   ['unit', 'Unit', (j) => j.values.unit_number || ''],
   ['tech', 'Tech', (j) => j.values.tech_name || ''],
   ['status', 'Status', (j) => STATUS[j.status] || j.status],
@@ -194,7 +194,7 @@ function invoiceBlock(job) {
     ...(job.no_parts ? [] : job.parts.map((p) => `Part: ${p.qty} × ${p.description}${p.part_number ? ` (${p.part_number})` : ''} @ ${money(p.price)} = ${money((+p.qty || 0) * (+p.price || 0))}`)),
     `Service truck: ${c.miles ?? '?'} mi`,
   ];
-  const client = `${v.company_name || '—'}${v.contact_name ? ` (attn ${v.contact_name})` : ''}${v.phone ? ` · ${v.phone}` : ''}${v.email ? ` · ${v.email}` : ''}`;
+  const client = `${clientName(job) || '—'}${v.contact_name && job.na.company_name == null ? ` (attn ${v.contact_name})` : ''}${v.phone ? ` · ${v.phone}` : ''}${v.email ? ` · ${v.email}` : ''}`;
   const notes = `Unit ${v.unit_number || '—'} · Plate ${v.plate || job.na.plate || '—'} · VIN ${v.vin || '—'} · Mileage ${shown({ format: 'thousands' }, v.unit_mileage) || '—'}`;
   return h('section', { class: 'invoice' },
     h('h2', { text: 'Invoice Simple entry' }),

@@ -32,14 +32,18 @@ export async function shrinkPhoto(file, max = 1600) {
 const MIN_INK = 60; // px of line, in canvas units (pad is 600 wide)
 const MIN_WIDTH = 40; // px across
 
-export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () => {}) {
+// axis: the direction the signature is written in ('x' normally; 'y' in the upright big pad).
+export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () => {}, axis = 'x') {
   const ctx = canvas.getContext('2d');
-  const scale = canvas.width / 600; // thresholds and line width grow with bigger pads (FR-18)
+  // Thresholds grow with bigger pads (FR-18), measured along the writing direction.
+  const scale = (axis === 'y' ? canvas.height : canvas.width) / 600;
   const minInk = MIN_INK * scale;
   const minWidth = MIN_WIDTH * scale;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.lineWidth = 3 * Math.max(1, scale * 0.7);
+  // Reason: the upright big pad is shrunk ~4× to fit the 600×180 box, so its pen is drawn
+  // thick enough to still be a ~2.5 px line in the saved signature.
+  ctx.lineWidth = axis === 'y' ? 2.5 / Math.min(600 / canvas.height, 180 / canvas.width) : 3 * Math.max(1, scale * 0.7);
   ctx.lineCap = 'round';
   ctx.strokeStyle = '#111';
   if (existing) {
@@ -53,6 +57,8 @@ export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () =>
   let ink = 0; // total since the pad was last cleared
   let minX = Infinity;
   let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
   const pt = (e) => {
     const r = canvas.getBoundingClientRect();
     return [(e.clientX - r.left) * (canvas.width / r.width), (e.clientY - r.top) * (canvas.height / r.height)];
@@ -70,6 +76,8 @@ export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () =>
     ink += Math.hypot(p[0] - last[0], p[1] - last[1]);
     minX = Math.min(minX, p[0], last[0]);
     maxX = Math.max(maxX, p[0], last[0]);
+    minY = Math.min(minY, p[1], last[1]);
+    maxY = Math.max(maxY, p[1], last[1]);
     last = p;
     ctx.lineTo(...p);
     ctx.stroke();
@@ -79,16 +87,18 @@ export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () =>
     drawing = false;
     // Strokes add up (initials are often several small strokes); the pad only counts as
     // signed once the total is big enough.
-    if (existing || (ink >= minInk && maxX - minX >= minWidth)) onDone(canvas.toDataURL('image/png'));
+    const span = axis === 'y' ? maxY - minY : maxX - minX;
+    if (existing || (ink >= minInk && span >= minWidth)) onDone(canvas.toDataURL('image/png'));
     else if (ink > 0) onTooSmall();
   };
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointercancel', end);
 }
 
-// FR-18: a full-screen signing area (best sideways). The bar with Cancel / Clear / Done sits
-// outside the drawing area, so leaving never draws. Done shrinks the signature to fit the
-// normal 600×180 box; Cancel changes nothing. onSave(dataUrl) / onTooSmall() are callbacks.
+// FR-18 / S18: a full-screen signing area that never rotates the phone. The owner keeps
+// holding it upright: Cancel · Clear · Done sit at the bottom the right way up; the label runs
+// sideways so the signer writes along the long side. Done turns the drawing 90° so it reads
+// horizontally and fits it into the normal 600×180 box; Cancel changes nothing.
 export function openBigPad({ label, onSave, onTooSmall }) {
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
@@ -99,7 +109,6 @@ export function openBigPad({ label, onSave, onTooSmall }) {
   const overlay = el('div', 'bigpad');
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-label', `${label}: sign here`);
-  const bar = el('div', 'bigpad-bar');
   const button = (text, cls, fn) => {
     const b = el('button', `btn ${cls}`, text);
     b.type = 'button';
@@ -107,6 +116,7 @@ export function openBigPad({ label, onSave, onTooSmall }) {
     return b;
   };
   const area = el('div', 'bigpad-area');
+  const side = el('div', 'bigpad-label', `${label}: sign here ✍`); // reads sideways, along the pad
   let canvas;
   let captured = null;
 
@@ -115,45 +125,50 @@ export function openBigPad({ label, onSave, onTooSmall }) {
     const r = area.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas = el('canvas');
-    canvas.width = Math.max(300, Math.round(r.width * dpr));
-    canvas.height = Math.max(120, Math.round(r.height * dpr));
+    canvas.width = Math.max(200, Math.round(r.width * dpr));
+    canvas.height = Math.max(300, Math.round(r.height * dpr));
     canvas.setAttribute('aria-label', `${label} signing area`);
-    area.replaceChildren(canvas);
-    setupSigPad(canvas, null, false, (url) => { captured = url; }, () => { captured = null; onTooSmall(); });
+    area.replaceChildren(canvas, el('div', 'bigpad-line'));
+    // The signer writes top-to-bottom on screen (left-to-right for them), so measure along y.
+    setupSigPad(canvas, null, false, (url) => { captured = url; }, () => { captured = null; onTooSmall(); }, 'y');
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
-  // Turning the phone resizes the area: start fresh only if nothing has been signed yet.
-  const onResize = () => { if (!captured) fresh(); };
   function close() {
     document.removeEventListener('keydown', onKey);
-    window.removeEventListener('resize', onResize);
-    try { screen.orientation?.unlock?.(); } catch { /* not supported */ }
-    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     overlay.remove();
   }
   const done = () => {
     if (!captured) { onTooSmall(); return; }
-    // Fit the big signature into the normal box, keeping its shape.
+    // Turn it 90° back (a point (x, y) → (y, width − x)) so the signature reads horizontally…
+    const turned = el('canvas');
+    turned.width = canvas.height;
+    turned.height = canvas.width;
+    const t = turned.getContext('2d');
+    t.translate(0, canvas.width);
+    t.rotate(-Math.PI / 2);
+    t.drawImage(canvas, 0, 0);
+    // …then fit it into the normal box, keeping its shape.
     const out = el('canvas');
     out.width = 600;
     out.height = 180;
     const c = out.getContext('2d');
     c.fillStyle = '#fff';
     c.fillRect(0, 0, 600, 180);
-    const k = Math.min(600 / canvas.width, 180 / canvas.height);
-    const w = canvas.width * k;
-    const h = canvas.height * k;
-    c.drawImage(canvas, (600 - w) / 2, (180 - h) / 2, w, h);
+    const k = Math.min(600 / turned.width, 180 / turned.height);
+    const w = turned.width * k;
+    const h = turned.height * k;
+    c.drawImage(turned, (600 - w) / 2, (180 - h) / 2, w, h);
     onSave(out.toDataURL('image/png'));
     close();
   };
 
-  bar.append(button('Cancel', 'ghost', close), el('strong', '', label), button('Clear', '', fresh), button('Done ✓', 'primary', done));
-  overlay.append(bar, el('p', 'rotate-hint', '↻ Turn your phone sideways for more room'), area);
+  const bar = el('div', 'bigpad-bar');
+  bar.append(button('Cancel', 'ghost', close), button('Clear', '', fresh), button('Done ✓', 'primary', done));
+  const body = el('div', 'bigpad-body');
+  // The signer's "up" is the screen's right edge, so the label sits there, above their writing.
+  body.append(area, side);
+  overlay.append(body, bar);
   document.body.append(overlay);
   document.addEventListener('keydown', onKey);
-  window.addEventListener('resize', onResize);
-  // Sideways where the phone allows it (Android, installed app); iPhones show the hint instead.
-  document.documentElement.requestFullscreen?.().then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
   requestAnimationFrame(fresh);
 }

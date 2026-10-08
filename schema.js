@@ -19,15 +19,15 @@ export const SECTIONS = [
   {
     id: 'job', title: 'Job',
     fields: [
-      { id: 'date', label: 'Date', type: 'date', na: false },
-      { id: 'tech_name', label: 'Tech name', type: 'text', na: false },
-      { id: 'wo_number', label: 'Work order / invoice #', type: 'text', na: false, kind: 'wo' },
+      { id: 'date', label: 'Date', type: 'date' },
+      { id: 'tech_name', label: 'Tech name', type: 'text' },
+      { id: 'wo_number', label: 'Work order / invoice #', type: 'text', kind: 'wo' },
     ],
   },
   {
     id: 'customer', title: 'Customer / company contact',
     fields: [
-      { id: 'company_name', label: 'Company name', type: 'text', na: false },
+      { id: 'company_name', label: 'Company name', type: 'text' },
       { id: 'contact_name', label: 'Contact name', type: 'text' },
       { id: 'phone', label: 'Phone', type: 'tel', kind: 'phone', format: 'phone' },
       { id: 'email', label: 'Email', type: 'email', kind: 'email' },
@@ -46,9 +46,9 @@ export const SECTIONS = [
   {
     id: 'work', title: 'Work performed',
     fields: [
-      { id: 'complaint', label: 'Complaint', type: 'textarea', minLen: 10, na: false },
+      { id: 'complaint', label: 'Complaint', type: 'textarea', minLen: 10 },
       { id: 'diagnostics', label: 'Diagnostics', type: 'textarea', minLen: 10 },
-      { id: 'repairs', label: 'Repairs completed', type: 'textarea', minLen: 10, na: false },
+      { id: 'repairs', label: 'Repairs completed', type: 'textarea', minLen: 10 },
       { id: 'test_results', label: 'Test results', type: 'textarea', minLen: 5 },
       { id: 'customer_instructions', label: 'Customer instructions', type: 'textarea', minLen: 5 },
       { id: 'follow_up', label: 'Follow-up needed', type: 'textarea', minLen: 5 },
@@ -62,7 +62,7 @@ export const SECTIONS = [
   {
     id: 'location', title: 'Breakdown / jobsite address',
     fields: [
-      { id: 'address', label: 'Address / location', type: 'text', minLen: 4, na: false },
+      { id: 'address', label: 'Address / location', type: 'text', minLen: 4 },
       { id: 'city', label: 'City / area', type: 'text' },
       { id: 'location_notes', label: 'Location notes / gate code / landmark', type: 'textarea', minLen: 3 },
     ],
@@ -70,8 +70,8 @@ export const SECTIONS = [
   {
     id: 'time', title: 'Time and mileage',
     fields: [
-      { id: 'start_time', label: 'Start time', type: 'datetime-local', na: false, kind: 'startTime' },
-      { id: 'end_time', label: 'End time', type: 'datetime-local', na: false, kind: 'endTime' },
+      { id: 'start_time', label: 'Start time', type: 'datetime-local', kind: 'startTime' },
+      { id: 'end_time', label: 'End time', type: 'datetime-local', kind: 'endTime' },
       { id: 'truck_start_miles', label: 'Start service truck miles', type: 'number', kind: 'int', format: 'thousands' },
       { id: 'truck_end_miles', label: 'End service truck miles', type: 'number', kind: 'truckEnd', format: 'thousands' },
     ],
@@ -105,6 +105,12 @@ export const PHOTO_SLOTS = [
 export const PART_RECEIPT = { label: 'Receipt photo' };
 
 export const SCHEMA_VERSION = 2;
+
+// Who the job is for (S20): the company, or — for a private customer (company N/A) — the
+// contact's name. Used by the job list, the office sheet and the invoice block.
+export const clientName = (job) => (job.na?.company_name != null
+  ? (job.values.contact_name || 'Private customer')
+  : (job.values.company_name || ''));
 
 // Minimum shape every stored or imported job must have. Anything else is refused or
 // skipped, so one bad record can never stop the app from opening (A-09).
