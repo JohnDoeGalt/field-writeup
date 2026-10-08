@@ -724,6 +724,8 @@ async function renderEditor(id, settings) {
 hooks.route = route;
 hooks.closeEditor = closeEditor;
 store.requestPersistence();
+const UPDATE_EVERY_MS = 30 * 60 * 1000;
+
 // B-31: when a newer version takes over, say so and offer a one-tap update.
 function showUpdateBanner() {
   if (document.querySelector('.update-banner')) return;
@@ -743,6 +745,9 @@ if ('serviceWorker' in navigator) {
     // screen — don't rely on the browser's own (irregular) checks.
     reg.update().catch(() => {});
     document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    // …and every 30 minutes while it's on screen, for a tab or phone that's never closed or
+    // put to sleep (e.g. the office computer). One small request; never reloads by itself.
+    setInterval(() => { if (!document.hidden && navigator.onLine) reg.update().catch(() => {}); }, UPDATE_EVERY_MS);
   }).catch(() => {});
 }
 route();
