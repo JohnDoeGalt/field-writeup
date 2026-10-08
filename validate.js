@@ -67,7 +67,8 @@ function fieldProblem(f, value, job, ctx) {
   const v = String(value ?? '').trim();
   if (!v) return 'Required';
   if (f.minLen && v.length < f.minLen) return `Too short — give real detail (min ${f.minLen} characters)`;
-  if (f.minLen && words(v) < (f.minLen >= 10 ? 3 : 2)) return 'Use real words — say what you found or did';
+  // "Real words" is for descriptions of the work, not addresses ("Interstate 5") or gate codes.
+  if (f.type === 'textarea' && f.minLen >= 5 && words(v) < (f.minLen >= 10 ? 3 : 2)) return 'Use real words — say what you found or did';
   switch (f.kind) {
     case 'wo':
       return ctx.woUsedBy ? `This WO # is already used on ${ctx.woUsedBy}. Use a new number.` : null;
@@ -215,6 +216,11 @@ export function validateJob(job, ctx = {}) {
         add(`part-${i}-receipt`, 'parts', label, 'Photo required (or N/A with a reason)');
       }
     });
+  }
+
+  // FR-17: an address the GPS filled in must be confirmed (or retyped) by the tech.
+  if (job.address_from_gps && !job.address_confirmed && !out.some((p) => p.key === 'address')) {
+    add('address', 'location', 'Address / location', 'Check the GPS address: tap "Yes, that\'s right" or fix it');
   }
 
   const sectionOf = Object.fromEntries(allFields().map((f) => [f.id, f.section]));

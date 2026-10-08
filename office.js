@@ -8,6 +8,7 @@ import { buildCsv, money } from './report.js';
 import { mergePlan } from './package.js';
 import { readJobsFile } from './transfer.js';
 import { h, mount, plural, download } from './ui.js';
+import { FORMATTERS } from './format.js';
 
 const STATUS = { draft: 'In progress', complete: 'Complete', sent: 'Sent' };
 const photoCount = (j) => Object.values(j.photos).reduce((n, a) => n + a.length, 0)
@@ -150,12 +151,15 @@ const thumbs = (label, list) => list.map((src, i) => h('figure', { class: 'rphot
   h('img', { src, alt: `${label}${list.length > 1 ? ` ${i + 1}` : ''}`, onclick: () => lightbox(src, label) }),
   h('figcaption', { text: `📷 ${label}${list.length > 1 ? ` ${i + 1}` : ''}` })));
 
+// FR-16: the report shows phones and miles the same way the phone did (older jobs included).
+const shown = (f, v) => (FORMATTERS[f.format] && v ? FORMATTERS[f.format](v).show : String(v ?? ''));
+
 function fieldBlock(job, f) {
   const na = job.na[f.id];
   const slots = PHOTO_SLOTS.filter((s) => s.for === f.id);
   return h('div', { class: 'rfield' },
     h('div', { class: 'rlabel', text: f.label }),
-    na != null ? h('div', { class: 'rvalue na', text: `N/A: ${na}` }) : h('div', { class: 'rvalue', text: String(job.values[f.id] ?? '') || '—' }),
+    na != null ? h('div', { class: 'rvalue na', text: `N/A: ${na}` }) : h('div', { class: 'rvalue', text: shown(f, job.values[f.id]) || '—' }),
     f.id === 'vin' && job.vin_override && h('div', { class: 'muted small', text: 'Check digit overridden by the tech (see VIN plate photo).' }),
     slots.map((s) => (job.photo_na[s.id] != null
       ? h('div', { class: 'muted small', text: `📷 ${s.label}: N/A (${job.photo_na[s.id]})` })
@@ -191,7 +195,7 @@ function invoiceBlock(job) {
     `Service truck: ${c.miles ?? '?'} mi`,
   ];
   const client = `${v.company_name || '—'}${v.contact_name ? ` (attn ${v.contact_name})` : ''}${v.phone ? ` · ${v.phone}` : ''}${v.email ? ` · ${v.email}` : ''}`;
-  const notes = `Unit ${v.unit_number || '—'} · Plate ${v.plate || job.na.plate || '—'} · VIN ${v.vin || '—'} · Mileage ${v.unit_mileage || '—'}`;
+  const notes = `Unit ${v.unit_number || '—'} · Plate ${v.plate || job.na.plate || '—'} · VIN ${v.vin || '—'} · Mileage ${shown({ format: 'thousands' }, v.unit_mileage) || '—'}`;
   return h('section', { class: 'invoice' },
     h('h2', { text: 'Invoice Simple entry' }),
     h('p', { class: 'muted small no-print', text: 'Click Copy, then paste into Invoice Simple.' }),
@@ -231,5 +235,9 @@ export async function renderOfficeJob(id) {
       (job.photos.unassigned || []).length > 0 && h('section', { class: 'rsection' },
         h('h2', { text: 'Older receipts (not matched to a part)' }),
         h('div', { class: 'rphotos' }, thumbs('Older receipt', job.photos.unassigned))),
-      job.gps && h('p', { class: 'muted small', text: `GPS: ${job.gps.lat.toFixed(5)}, ${job.gps.lng.toFixed(5)} (±${Math.round(job.gps.acc)} m)` })));
+      job.address_from_gps && h('p', { class: 'muted small', text: `Address filled from GPS and ${job.address_confirmed ? 'confirmed' : 'NOT confirmed'} by the tech.` }),
+      // The pin is saved on every tap, even where there's no address (roadside, middle of nowhere).
+      job.gps && h('p', { class: 'small' },
+        `📍 GPS pin: ${job.gps.lat.toFixed(5)}, ${job.gps.lng.toFixed(5)} (±${Math.round(job.gps.acc)} m) `,
+        h('a', { href: `https://www.google.com/maps?q=${job.gps.lat},${job.gps.lng}`, target: '_blank', rel: 'noopener', class: 'no-print', text: 'Open in Maps' }))));
 }

@@ -1,13 +1,15 @@
 // Offline app shell: after the first visit the app opens and works with no signal.
-// Updates arrive on their own (see fetch); bump VERSION only to force a clean re-cache.
-const VERSION = 'fw-v1';
+// VERSION is stamped by tools/deploy_pages.py on every publish, so phones see a new worker,
+// fetch the new files, and the page shows "A new version is ready" (B-31).
+const VERSION = 'fw-2026.10.07-1717';
 const FILES = [
-  './', './index.html', './app.js', './schema.js', './validate.js', './store.js', './report.js', './package.js', './ui.js', './install.js', './media.js', './transfer.js', './office.js',
+  './', './index.html', './app.js', './schema.js', './validate.js', './store.js', './report.js', './package.js', './ui.js', './install.js', './media.js', './transfer.js', './office.js', './format.js', './geo.js',
   './vendor/fflate.min.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so a new version caches the NEW files.
+  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {

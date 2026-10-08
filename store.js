@@ -67,6 +67,13 @@ export async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...(await run('kv', 'readonly', (s) => s.get('settings'))) };
 }
 export const saveSettings = (v) => run('kv', 'readwrite', (s) => s.put(v, 'settings'));
+// Change some settings in ONE transaction (read + write), so a screen that loads right after
+// always sees the change, and two switches flipped quickly never overwrite each other.
+export const patchSettings = (patch) => run('kv', 'readwrite', (s) => {
+  const r = s.get('settings');
+  r.onsuccess = () => s.put({ ...DEFAULT_SETTINGS, ...r.result, ...patch }, 'settings');
+  return r;
+});
 
 // Ask the browser not to evict our data under storage pressure (iOS/Android may otherwise).
 export async function requestPersistence() {

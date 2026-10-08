@@ -29,7 +29,7 @@ export const SECTIONS = [
     fields: [
       { id: 'company_name', label: 'Company name', type: 'text', na: false },
       { id: 'contact_name', label: 'Contact name', type: 'text' },
-      { id: 'phone', label: 'Phone', type: 'tel', kind: 'phone' },
+      { id: 'phone', label: 'Phone', type: 'tel', kind: 'phone', format: 'phone' },
       { id: 'email', label: 'Email', type: 'email', kind: 'email' },
     ],
   },
@@ -37,9 +37,9 @@ export const SECTIONS = [
     id: 'unit', title: 'Unit / vehicle',
     fields: [
       { id: 'unit_number', label: 'Unit number', type: 'text' },
-      { id: 'plate', label: 'License plate number', type: 'text', kind: 'plate' },
+      { id: 'plate', label: 'License plate number', type: 'text', kind: 'plate', format: 'upper' },
       { id: 'state', label: 'State', type: 'select', options: STATES },
-      { id: 'unit_mileage', label: 'Unit mileage (odometer)', type: 'number', kind: 'unitMileage' },
+      { id: 'unit_mileage', label: 'Unit mileage (odometer)', type: 'number', kind: 'unitMileage', format: 'thousands' },
       { id: 'vin', label: 'VIN', type: 'text', kind: 'vin' },
     ],
   },
@@ -72,8 +72,8 @@ export const SECTIONS = [
     fields: [
       { id: 'start_time', label: 'Start time', type: 'datetime-local', na: false, kind: 'startTime' },
       { id: 'end_time', label: 'End time', type: 'datetime-local', na: false, kind: 'endTime' },
-      { id: 'truck_start_miles', label: 'Start service truck miles', type: 'number', kind: 'int' },
-      { id: 'truck_end_miles', label: 'End service truck miles', type: 'number', kind: 'truckEnd' },
+      { id: 'truck_start_miles', label: 'Start service truck miles', type: 'number', kind: 'int', format: 'thousands' },
+      { id: 'truck_end_miles', label: 'End service truck miles', type: 'number', kind: 'truckEnd', format: 'thousands' },
     ],
   },
   {
@@ -94,10 +94,10 @@ export const PART_COLUMNS = [
 // shows it in that block and the package/report keep the pairing. A new photo requirement
 // (e.g. tires) is one line here: { id: 'tires', label: 'Tires', for: '<field id>' }.
 export const PHOTO_SLOTS = [
-  { id: 'unit', label: 'Unit', for: 'unit_number', na: false },
+  { id: 'unit', label: 'Unit', for: 'unit_number' },
   { id: 'vin_plate', label: 'VIN / data plate', for: 'vin' },
   { id: 'license_plate', label: 'License plate', for: 'plate' },
-  { id: 'completed_work', label: 'Completed work', for: 'repairs', na: false, multiple: true },
+  { id: 'completed_work', label: 'Completed work', for: 'repairs', multiple: true },
 ];
 
 // Each part line carries its own receipt photo(s) (part.receipt_photos), or an N/A reason

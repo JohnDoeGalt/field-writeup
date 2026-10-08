@@ -5,6 +5,8 @@ import { selectForExport } from './package.js';
 import { $app, h, mount, toast, ask, pad, localDateTime, hooks } from './ui.js';
 import { isStandalone, isIOS, browserOk, installGuide, renderInstallGate } from './install.js';
 import { shrinkPhoto, setupSigPad } from './media.js';
+import { lookupAddress, ATTRIBUTION } from './geo.js';
+import { FORMATTERS, KEY_CHARS, formatMoney, formatMoneyOnLeave, caretAfter, countKeyChars } from './format.js';
 import { exportPackage, removeExported, exportBackup, restoreBackup } from './transfer.js';
 import { renderOffice, renderOfficeJob } from './office.js';
 
@@ -111,36 +113,72 @@ function renderSettings(settings) {
     h('header', { class: 'top' },
       settings.techName ? h('a', { class: 'btn ghost', href: '#/', text: '‹ Back' }) : h('span'),
       h('h1', { text: 'Settings' }), h('span')),
-    h('main', { class: 'settings' },
-      !settings.techName && !isStandalone() && installGuide(true),
-      !settings.techName && h('p', { class: 'note', text: '👋 Hi! Do this one time. Type your name and the office email. Then tap Save.' }),
-      !settings.techName && h('a', { class: 'btn big', href: '#/office', text: '🖥 At the office computer? Open the Office view' }),
+    h('main', { class: 'settings' }, settings.techName ? fullSettings() : firstRun()));
+
+  function restoreBtn(text) {
+    return h('label', { class: 'btn' }, text,
+      h('input', { type: 'file', accept: '.zip,application/zip,.json,application/json', hidden: true, onchange: (e) => restoreBackup(e.target.files[0]) }));
+  }
+  function saveBtn() {
+    return h('button', {
+      class: 'btn primary big',
+      text: 'Save',
+      onclick: async () => {
+        if (!s.techName?.trim()) { toast('Enter your name first'); return; }
+        await store.saveSettings({ ...s, techName: s.techName.trim() });
+        location.hash = '#/';
+      },
+    });
+  }
+
+  // B-31 (S15): the very first screen only asks what a tech needs to start.
+  function firstRun() {
+    return [
+      !isStandalone() && installGuide(true),
+      h('p', { class: 'note', text: '👋 Hi! Do this one time. Type your name and the office email. Then tap Save.' }),
+      input('techName', 'Your name', { autocomplete: 'name', required: true }),
+      input('officeEmail', 'Office email (your jobs go here)', { type: 'email', inputmode: 'email' }),
+      saveBtn(),
+      h('a', { class: 'btn big', href: '#/office', text: '🖥 At the office computer? Open the Office view' }),
+      restoreBtn('New phone? Bring back your backup'),
+    ];
+  }
+
+  function fullSettings() {
+    const version = h('p', { class: 'muted small', text: 'App version: …' });
+    caches?.keys().then((keys) => { version.textContent = `App version: ${keys.find((k) => k.startsWith('fw-'))?.slice(3) || 'not installed yet'}`; }).catch(() => {});
+    return [
       input('techName', 'Your name', { autocomplete: 'name', required: true }),
       input('officeEmail', 'Office email (your jobs go here)', { type: 'email', inputmode: 'email' }),
       input('woPrefix', 'Letters for work order numbers (you can skip this)', { placeholder: 'e.g. RA' }),
-      h('button', {
-        class: 'btn primary big',
-        text: 'Save',
-        onclick: async () => {
-          if (!s.techName?.trim()) { toast('Enter your name first'); return; }
-          await store.saveSettings({ ...s, techName: s.techName.trim() });
-          location.hash = '#/';
-        },
-      }),
+      saveBtn(),
       h('h2', { text: 'Backup' }),
       h('p', { class: 'muted', text: 'Your jobs live only on this phone. Save a backup now and then (email it to yourself).' }),
       h('button', { class: 'btn', onclick: exportBackup, text: 'Save a backup (all jobs)' }),
-      h('label', { class: 'btn' }, 'Bring jobs back from a backup…',
-        h('input', { type: 'file', accept: '.zip,application/zip,.json,application/json', hidden: true, onchange: (e) => restoreBackup(e.target.files[0]) })),
+      restoreBtn('Bring jobs back from a backup…'),
       h('button', { class: 'btn', onclick: removeExported, text: 'Remove jobs already sent' }),
-      // FR-15: which Export button(s) techs see. Set once by the boss; kept out of the way.
-      h('details', { class: 'admin' },
-        h('summary', { text: 'For the boss: Send button' }),
+      version,
+      officeSettings(),
+    ];
+  }
+
+  // FR-15 / FR-17: set once by the boss; kept at the bottom, out of the techs' way.
+  function officeSettings() {
+    return h('details', { class: 'admin' },
+        h('summary', { text: 'Office settings (techs can ignore this)' }),
         h('label', { class: 'field' },
           h('span', { class: 'label', text: 'What the send button sends' }),
-          h('select', { onchange: async (e) => { s.exportMode = e.target.value; await store.saveSettings({ ...settings, exportMode: s.exportMode }); toast('Saved'); } },
+          h('select', { onchange: async (e) => { s.exportMode = e.target.value; await store.patchSettings({ exportMode: s.exportMode }); toast('Saved'); } },
             [['everything', 'All jobs on the phone (one button)'], ['since-last', 'Only new jobs since last send (one button)'], ['both', 'Show both buttons']]
-              .map(([v, t]) => h('option', { value: v, text: t, selected: (settings.exportMode || 'everything') === v })))))));
+              .map(([v, t]) => h('option', { value: v, text: t, selected: (settings.exportMode || 'everything') === v })))),
+        // FR-17: Nominatim's policy requires the lookup can be switched off.
+        h('label', { class: 'check' },
+          h('input', {
+            type: 'checkbox', checked: settings.gpsLookup !== false,
+            onchange: async (e) => { s.gpsLookup = e.target.checked; await store.patchSettings({ gpsLookup: s.gpsLookup }); toast('Saved'); },
+          }),
+          ' Look up the address from GPS (needs signal; uses OpenStreetMap)'));
+  }
 }
 
 // ---------- editor ----------
@@ -283,6 +321,12 @@ async function renderEditor(id, settings) {
   function fieldEl(f) {
     const isNA = job.na[f.id] != null;
     const set = (val) => {
+      if ((f.id === 'address' || f.id === 'city') && job.address_from_gps && !job.address_confirmed) {
+        // The tech is typing the address themselves: that's their answer, no GPS check needed.
+        delete job.address_from_gps;
+        delete job.address_confirmed;
+        $app.querySelector('.gps-confirm')?.remove();
+      }
       if (f.id === 'vin' && job.vin_override && val !== job.values.vin) {
         job.vin_override = false; // A-15: a new VIN must pass on its own
         const box = $app.querySelector('.vin-override input');
@@ -305,20 +349,37 @@ async function renderEditor(id, settings) {
       const extra = {
         tel: { inputmode: 'tel', autocomplete: 'off' },
         email: { inputmode: 'email', autocapitalize: 'off' },
-        number: { inputmode: 'numeric', type: 'text', pattern: '[0-9]*' },
+        number: { inputmode: 'numeric', type: 'text' },
       }[f.type] || {};
+      const fmt = FORMATTERS[f.format]; // FR-16: phone, 1,000s, capitals — shaped as they type
       input = h('input', {
-        ...common, type: f.type, value: job.values[f.id] || '', ...extra,
+        ...common, type: f.type, value: fmt ? fmt(job.values[f.id] || '').show : (job.values[f.id] || ''), ...extra,
         list: { company_name: 'dl-company', unit_number: 'dl-unit' }[f.id],
         autocapitalize: f.id === 'vin' || f.id === 'plate' ? 'characters' : extra.autocapitalize,
         maxlength: { vin: 17, plate: 10 }[f.kind],
         oninput: (e) => {
+          const el = e.target;
           // VIN: capitals, no spaces/dashes, as they type, so the 17-count is honest.
-          if (f.kind === 'vin') { const nv = normalizeVin(e.target.value); if (nv !== e.target.value) e.target.value = nv; }
-          set(e.target.value);
+          if (f.kind === 'vin') { const nv = normalizeVin(el.value); if (nv !== el.value) el.value = nv; }
+          if (!fmt) { set(el.value); return; }
+          const r = fmt(el.value);
+          // While deleting, don't put back the "(", ")" or "-" they just removed; tidy on leave.
+          if (!e.inputType?.startsWith('delete') && r.show !== el.value) {
+            const at = el.selectionStart ?? el.value.length;
+            const re = KEY_CHARS[f.format];
+            const typed = countKeyChars(el.value.slice(0, at), re);
+            const atEnd = at >= el.value.length; // typing at the end (the usual case) stays at the end
+            el.value = r.show;
+            const pos = atEnd ? r.show.length : caretAfter(r.show, typed, re);
+            try { el.setSelectionRange(pos, pos); } catch { /* not focusable */ }
+          }
+          set(r.store);
         },
         onchange: (e) => onPick(f.id, e.target.value),
       });
+      if (fmt) {
+        input.addEventListener('blur', () => { input.value = fmt(input.value).show; });
+      }
     }
 
     const helpers = [];
@@ -335,7 +396,7 @@ async function renderEditor(id, settings) {
         set(input.value);
       } }));
       if (f.type === 'datetime-local') helpers.push(h('button', { class: 'btn small', type: 'button', text: 'Now', onclick: () => { input.value = localDateTime(); set(input.value); } }));
-      if (f.id === 'address') helpers.push(h('button', { class: 'btn small', type: 'button', text: job.gps ? 'GPS ✓ (update)' : 'Save GPS', onclick: (e) => captureGps(e.target) }));
+      if (f.id === 'address') helpers.push(h('button', { class: 'btn small', type: 'button', text: '📍 Use my location', onclick: (e) => captureGps(e.target) }));
     }
 
     const wrap = h('div', { class: 'field', 'data-key': f.id },
@@ -361,6 +422,7 @@ async function renderEditor(id, settings) {
     }
     if (f.na && !locked) wrap.append(naToggle(f.id, isNA, job.na, () => rerender(), f.id, f.label));
     else if (isNA) wrap.append(h('div', { class: 'muted', text: `N/A: ${job.na[f.id]}` }));
+    if (f.id === 'address') { const g = gpsConfirm(); if (g) wrap.append(g); }
     // Photos that prove this field sit right under it (FR-10).
     const photos = PHOTO_SLOTS.filter((s) => s.for === f.id).map(slotWidget);
     return photos.length ? h('div', { class: 'with-photos' }, wrap, ...photos) : wrap;
@@ -413,15 +475,48 @@ async function renderEditor(id, settings) {
     if (fieldId === 'vin') { setInPlace('vin', normalizeVin(value)); save(); refresh(); }
   }
 
+  // FR-17: save the GPS point and, with signal, fill the nearest address for the tech to confirm.
   function captureGps(btn) {
-    if (!navigator.geolocation) { toast('GPS not available on this device'); return; }
-    btn.textContent = 'Locating…';
-    navigator.geolocation.getCurrentPosition((pos) => {
+    if (!navigator.geolocation) { toast('This phone has no GPS. Please type the address.'); return; }
+    btn.textContent = 'Finding you…';
+    navigator.geolocation.getCurrentPosition(async (pos) => {
       job.gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, at: new Date().toISOString() };
-      save();
-      btn.textContent = 'GPS ✓ (update)';
-      toast(`Location saved (±${Math.round(pos.coords.accuracy)} m). Still type the address.`);
-    }, () => { btn.textContent = 'Save GPS'; toast('Could not get a GPS fix'); }, { enableHighAccuracy: true, timeout: 20000 });
+      const found = settings.gpsLookup === false ? null : await lookupAddress(job.gps.lat, job.gps.lng);
+      if (closed) { if (await store.getJob(job.id)) await store.saveJob(job).catch(saveFailed); return; } // A-08 rule
+      if (found) {
+        setInPlace('address', found.address);
+        if (found.city) setInPlace('city', found.city);
+        job.address_from_gps = { ...found, at: job.gps.at };
+        job.address_confirmed = false;
+        touched.add('address');
+        save();
+        rerender();
+        $app.querySelector('.gps-confirm')?.scrollIntoView({ block: 'center' });
+      } else {
+        save();
+        btn.textContent = '📍 GPS saved';
+        toast(settings.gpsLookup === false ? 'Your location is saved. Please type the address.'
+          : !navigator.onLine ? 'No signal. Your location is saved. Please type the address.'
+            : 'Could not find the address. Your location is saved. Please type it.');
+      }
+    }, () => { btn.textContent = '📍 Use my location'; toast('Could not get your location. Please type the address.'); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+  }
+
+  // "Is this the right place?" — shown until the tech confirms or fixes a GPS-filled address.
+  function gpsConfirm() {
+    const g = job.address_from_gps;
+    if (!g || locked) return null;
+    if (job.address_confirmed) return h('p', { class: 'hint ok', text: 'Address checked' });
+    return h('div', { class: 'gps-confirm note' },
+      h('p', {}, h('strong', { text: '📍 Is this the right place?' })),
+      h('p', { text: [g.address, g.city].filter(Boolean).join(', ') }),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', type: 'button', text: '✓ Yes, that\'s right', onclick: () => { job.address_confirmed = true; save(); rerender(); } }),
+        h('button', {
+          class: 'btn', type: 'button', text: '✏ No, I\'ll fix it',
+          onclick: () => { delete job.address_from_gps; delete job.address_confirmed; save(); rerender(); $app.querySelector('#in-address')?.focus(); },
+        })),
+      h('p', { class: 'muted small', text: ATTRIBUTION }));
   }
 
   function partsSection() {
@@ -434,9 +529,22 @@ async function renderEditor(id, settings) {
           PART_COLUMNS.map((c) => h('div', { class: 'field', 'data-key': `part-${i}-${c.id}` },
             h('label', { class: 'label', for: `part-${i}-${c.id}`, text: c.label }),
             h('input', {
-              id: `part-${i}-${c.id}`, value: p[c.id] ?? '', disabled: locked,
+              id: `part-${i}-${c.id}`, disabled: locked,
+              value: c.id === 'price' ? formatMoney(p.price ?? '').show : (p[c.id] ?? ''),
               ...(c.type === 'number' ? { inputmode: 'decimal' } : {}),
-              oninput: (e) => { p[c.id] = e.target.value; touched.add(`part-${i}-${c.id}`); save(); refresh(); },
+              oninput: (e) => {
+                // FR-16: the price gets its "$" as it's typed; the saved value stays a plain number.
+                if (c.id === 'price') {
+                  const r = formatMoney(e.target.value);
+                  if (!e.inputType?.startsWith('delete') && r.show !== e.target.value) e.target.value = r.show;
+                  p.price = r.store;
+                } else p[c.id] = e.target.value;
+                touched.add(`part-${i}-${c.id}`);
+                save();
+                refresh();
+              },
+              // …and tidies to cents when the tech leaves the box ($12.50).
+              onblur: c.id === 'price' ? (e) => { const r = formatMoneyOnLeave(e.target.value); e.target.value = r.show; p.price = r.store; save(); refresh(); } : null,
             }),
             h('div', { class: 'err' }))),
           h('p', { class: 'line-total', 'data-linetotal': i, 'aria-live': 'polite' }),
@@ -462,37 +570,43 @@ async function renderEditor(id, settings) {
   // the photos live in; `naBag[naKey]` holds an N/A reason when one is allowed.
   function photoWidget({ key, label, list, multiple, naBag, naKey }) {
     const isNA = naBag && naBag[naKey] != null;
+    const addPhotos = async (files) => {
+      for (const file of files) {
+        try {
+          list.push(await shrinkPhoto(file)); // added one by one: a bad file never loses the good ones (A-21)
+        } catch {
+          toast('That photo could not be read. Try another one.');
+        }
+      }
+      touched.add(key);
+      if (closed) {
+        // A-08: the tech left while the photo was processing. Keep the photo, but never
+        // redraw this editor over the screen they're on now (or bring back a deleted job).
+        if (await store.getJob(job.id)) await store.saveJob(job).catch(saveFailed);
+        return;
+      }
+      save();
+      rerender();
+    };
+    // B-29 (S12): two plain buttons, because phones disagree on what one photo button
+    // shows — newer Android pickers have no camera, and a camera-only button can't use
+    // photos taken earlier.
+    const pick = (source, text) => h('label', { class: 'btn' }, text,
+      h('input', {
+        type: 'file', accept: 'image/*', hidden: true, 'data-source': source,
+        capture: source === 'camera' ? 'environment' : null,
+        multiple: source === 'library' && !!multiple,
+        'aria-label': `${label}: ${source === 'camera' ? 'take photo' : 'choose from my photos'}`,
+        onchange: (e) => addPhotos([...e.target.files]),
+      }));
     const wrap = h('div', { class: 'field photo-slot', 'data-key': key },
       h('span', { class: 'label', text: `📷 ${label}` }),
       h('div', { class: 'thumbs' }, list.map((src, i) => h('figure', {},
         h('img', { src, alt: `${label} ${i + 1}` }),
         !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Remove', onclick: () => { list.splice(i, 1); save(); rerender(); } })))),
-      !locked && !isNA && (multiple || list.length === 0) && h('label', { class: 'btn' },
-        list.length ? '+ Another photo' : 'Take photo',
-        h('input', {
-          // A-12: no `capture`, so phones offer Take Photo OR Photo Library (pictures taken
-          // earlier with the Camera app can still be attached).
-          type: 'file', accept: 'image/*', hidden: true, multiple: !!multiple,
-          'aria-label': `${label}: take photo`,
-          onchange: async (e) => {
-            for (const file of [...e.target.files]) {
-              try {
-                list.push(await shrinkPhoto(file)); // added one by one: a bad file never loses the good ones (A-21)
-              } catch {
-                toast('That photo could not be read. Try another one.');
-              }
-            }
-            touched.add(key);
-            if (closed) {
-              // A-08: the tech left while the photo was processing. Keep the photo, but never
-              // redraw this editor over the screen they're on now (or bring back a deleted job).
-              if (await store.getJob(job.id)) await store.saveJob(job).catch(saveFailed);
-              return;
-            }
-            save();
-            rerender();
-          },
-        })),
+      !locked && !isNA && (multiple || list.length === 0) && h('div', { class: 'row' },
+        pick('camera', list.length ? '📷 Take another' : '📷 Take photo'),
+        pick('library', '🖼 From my photos')),
       h('div', { class: 'err' }));
     if (naBag && !locked && list.length === 0) wrap.append(naToggle(naKey, isNA, naBag, () => rerender(), key, label));
     return wrap;
@@ -600,5 +714,23 @@ async function renderEditor(id, settings) {
 hooks.route = route;
 hooks.closeEditor = closeEditor;
 store.requestPersistence();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+// B-31: when a newer version takes over, say so and offer a one-tap update.
+function showUpdateBanner() {
+  if (document.querySelector('.update-banner')) return;
+  document.body.append(h('div', { class: 'update-banner', role: 'status' },
+    h('span', { text: '✨ A new version is ready.' }),
+    h('button', { class: 'btn primary small', type: 'button', text: 'Tap to update', onclick: () => { closeEditor(); location.reload(); } })));
+}
+if ('serviceWorker' in navigator) {
+  // The first install isn't an "update"; any version change after that is, even without a reload.
+  let hadVersion = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadVersion) showUpdateBanner();
+    hadVersion = true;
+  });
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // Look for a new version whenever the app comes back to the screen.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+  }).catch(() => {});
+}
 route();

@@ -64,7 +64,7 @@ export async function exportPackage(mode, settings) {
       if (j.status === 'complete') { j.status = 'sent'; j.sent_at = stamp; }
       await store.saveJob(j, { touch: false }); // keep updated_at: "since last" compares against it
     }
-    await store.saveSettings({ ...settings, lastExportAt: stamp });
+    await store.patchSettings({ lastExportAt: stamp });
     toast(`Sent! ${plural(jobs.length, 'write-up')} in the package.`);
   } catch (e) {
     console.error(e);
@@ -126,7 +126,7 @@ export async function restoreBackup(file) {
       const now = await store.getSettings();
       const filled = Object.fromEntries(['techName', 'officeEmail', 'woPrefix', 'exportMode']
         .filter((k) => typeof saved[k] === 'string' && saved[k] && !now[k]).map((k) => [k, saved[k]]));
-      if (Object.keys(filled).length) await store.saveSettings({ ...now, ...filled });
+      if (Object.keys(filled).length) await store.patchSettings(filled);
     }
     const changed = plan.added + plan.updated;
     toast(changed ? `Done! ${plural(changed, 'write-up')} ${changed === 1 ? 'is' : 'are'} back.` : 'Nothing new. These write-ups are already here.');
