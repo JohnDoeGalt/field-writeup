@@ -99,7 +99,10 @@ export function setupSigPad(canvas, existing, locked, onDone, onTooSmall = () =>
 // holding it upright: Cancel · Clear · Done sit at the bottom the right way up; the label runs
 // sideways so the signer writes along the long side. Done turns the drawing 90° so it reads
 // horizontally and fits it into the normal 600×180 box; Cancel changes nothing.
-export function openBigPad({ label, onSave, onTooSmall }) {
+//
+// FR-23 (S25): with `existing`, the pad opens showing that signature and can't be drawn on;
+// Clear asks "Clear this signature?" (big red Yes, normal No) and only Yes allows a new one.
+export function openBigPad({ label, existing, onSave, onTooSmall, onLockedTouch = () => {} }) {
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -116,12 +119,32 @@ export function openBigPad({ label, onSave, onTooSmall }) {
     return b;
   };
   const area = el('div', 'bigpad-area');
-  const side = el('div', 'bigpad-label', `${label}: sign here ✍`); // reads sideways, along the pad
+  const side = el('div', 'bigpad-label'); // reads sideways, along the pad
   let canvas;
   let captured = null;
+  let signed = !!existing; // a saved signature stays until Clear → Yes
+
+  // The saved signature is horizontal (600×180); turn it back the way the signer wrote it:
+  // a saved point (u, v) sits at (width − v, u) on the pad — the inverse of what Done does.
+  const showExisting = () => {
+    const img = new Image();
+    img.onload = () => {
+      const c = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      const k = Math.min(H / 600, W / 180);
+      c.save();
+      c.translate(W, 0);
+      c.rotate(Math.PI / 2);
+      c.drawImage(img, (H - 600 * k) / 2, (W - 180 * k) / 2, 600 * k, 180 * k);
+      c.restore();
+    };
+    img.src = existing;
+  };
 
   const fresh = () => {
     captured = null;
+    side.textContent = signed ? `${label}: signed ✓ (tap Clear to sign again)` : `${label}: sign here ✍`;
     const r = area.getBoundingClientRect();
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas = el('canvas');
@@ -130,7 +153,26 @@ export function openBigPad({ label, onSave, onTooSmall }) {
     canvas.setAttribute('aria-label', `${label} signing area`);
     area.replaceChildren(canvas, el('div', 'bigpad-line'));
     // The signer writes top-to-bottom on screen (left-to-right for them), so measure along y.
-    setupSigPad(canvas, null, false, (url) => { captured = url; }, () => { captured = null; onTooSmall(); }, 'y');
+    setupSigPad(canvas, null, signed, (url) => { captured = url; }, () => { captured = null; onTooSmall(); }, 'y');
+    if (signed) {
+      showExisting();
+      canvas.addEventListener('pointerdown', () => onLockedTouch());
+    }
+  };
+
+  // "Clear this signature?" in the middle of the pad, upright. Yes is big and red.
+  const askClear = () => {
+    const box = el('div', 'bigpad-confirm');
+    box.setAttribute('role', 'alertdialog');
+    box.setAttribute('aria-label', 'Clear this signature?');
+    const card = el('div', 'bigpad-confirm-card');
+    card.append(el('p', 'bigpad-confirm-q', 'Clear this signature?'), el('p', '', 'Then it can be signed again.'));
+    card.append(
+      button('Yes, clear it', 'big danger-solid', () => { box.remove(); signed = false; fresh(); }),
+      button('No', 'big', () => box.remove()),
+    );
+    box.append(card);
+    overlay.append(box);
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   function close() {
@@ -138,6 +180,7 @@ export function openBigPad({ label, onSave, onTooSmall }) {
     overlay.remove();
   }
   const done = () => {
+    if (signed) { close(); return; } // nothing changed: the saved signature stays
     if (!captured) { onTooSmall(); return; }
     // Turn it 90° back (a point (x, y) → (y, width − x)) so the signature reads horizontally…
     const turned = el('canvas');
@@ -163,7 +206,7 @@ export function openBigPad({ label, onSave, onTooSmall }) {
   };
 
   const bar = el('div', 'bigpad-bar');
-  bar.append(button('Cancel', 'ghost', close), button('Clear', '', fresh), button('Done ✓', 'primary', done));
+  bar.append(button('Cancel', 'ghost', close), button('Clear', '', () => (signed ? askClear() : fresh())), button('Done ✓', 'primary', done));
   const body = el('div', 'bigpad-body');
   // The signer's "up" is the screen's right edge, so the label sits there, above their writing.
   body.append(area, side);

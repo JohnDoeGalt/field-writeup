@@ -1,7 +1,7 @@
 // Offline app shell: after the first visit the app opens and works with no signal.
 // VERSION is stamped by tools/deploy_pages.py on every publish, so phones see a new worker,
 // fetch the new files, and the page shows "A new version is ready" (B-31).
-const VERSION = 'fw-2026.10.07-1832';
+const VERSION = 'fw-2026.10.07-1937';
 const FILES = [
   './', './index.html', './app.js', './schema.js', './validate.js', './store.js', './report.js', './package.js', './ui.js', './install.js', './media.js', './transfer.js', './office.js', './format.js', './geo.js',
   './vendor/fflate.min.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png',

@@ -19,6 +19,9 @@ export const SECTIONS = [
   {
     id: 'job', title: 'Job',
     fields: [
+      // FR-21 (S22, S23): tapped on arrival, so they come first. End time/miles stay below.
+      { id: 'start_time', label: 'Start time', type: 'datetime-local', kind: 'startTime' },
+      { id: 'truck_start_miles', label: 'Start service truck miles', type: 'number', kind: 'int', format: 'thousands' },
       { id: 'date', label: 'Date', type: 'date' },
       { id: 'tech_name', label: 'Tech name', type: 'text' },
       { id: 'wo_number', label: 'Work order / invoice #', type: 'text', kind: 'wo' },
@@ -70,9 +73,7 @@ export const SECTIONS = [
   {
     id: 'time', title: 'Time and mileage',
     fields: [
-      { id: 'start_time', label: 'Start time', type: 'datetime-local', kind: 'startTime' },
       { id: 'end_time', label: 'End time', type: 'datetime-local', kind: 'endTime' },
-      { id: 'truck_start_miles', label: 'Start service truck miles', type: 'number', kind: 'int', format: 'thousands' },
       { id: 'truck_end_miles', label: 'End service truck miles', type: 'number', kind: 'truckEnd', format: 'thousands' },
     ],
   },

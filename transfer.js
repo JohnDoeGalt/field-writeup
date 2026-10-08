@@ -2,27 +2,38 @@
 import * as store from './store.js';
 import { isJobShape, normalizeJob } from './schema.js';
 import { buildPackage, readPackage, selectForExport, mergePlan, packageName, EMAIL_LIMIT } from './package.js';
-import { toast, ask, download, plural, hooks } from './ui.js';
+import { h, toast, ask, download, plural, hooks } from './ui.js';
 
 export const APP_VERSION = '2026.10.07';
 
-// The phone's share sheet (Mail, Dropbox, Files…): true = shared, false = closed or already
-// open (A-02), null = this device can't share files (caller saves a download instead).
-async function tryShare(file, title, text) {
-  if (!navigator.canShare?.({ files: [file] })) return null;
-  try {
-    await navigator.share({ files: [file], title, text });
-    return true;
-  } catch (e) {
-    return ['AbortError', 'InvalidStateError'].includes(e.name) ? false : null;
-  }
+// The phone's share sheet (Mail, Dropbox, Files…): true = shared, false = closed, cancelled or
+// already open (A-02), null = this device can't share this file (caller saves a download).
+// Reason (S26): browsers only open the share sheet straight from a tap, and building the
+// package takes a moment — long enough for the first tap to "expire" on an iPhone, which made
+// the app fall back to downloading a zip. So the package is built first, and this sheet's own
+// "Send it" tap opens the share sheet with nothing in between.
+function shareSheet(file, title, text) {
+  if (!navigator.canShare?.({ files: [file] })) return Promise.resolve(null); // e.g. Android: no .zip sharing
+  return new Promise((resolve) => {
+    const done = (v) => { dlg.remove(); resolve(v); };
+    const dlg = h('div', { class: 'sheet', role: 'dialog', 'aria-label': 'Your package is ready' },
+      h('p', {}, h('strong', { text: '📦 Your package is ready' })),
+      h('p', { text: `${title} · ${(file.size / 1e6).toFixed(1)} MB. Tap Send, then pick Mail or Dropbox.` }),
+      h('button', {
+        class: 'btn big primary', type: 'button', text: '📤 Send it (Mail, Dropbox…)',
+        onclick: () => navigator.share({ files: [file], title, text })
+          .then(() => done(true), (e) => done(['AbortError', 'InvalidStateError'].includes(e.name) ? false : null)),
+      }),
+      h('button', { class: 'btn big', type: 'button', text: 'Cancel', onclick: () => done(false) }));
+    document.body.append(dlg);
+  });
 }
 
 // Returns true only when the share really happened, or the tech confirms they sent a
 // downloaded copy (A-02).
 async function shareOrSave(file, title, settings) {
   const to = settings.officeEmail ? `Send to: ${settings.officeEmail}` : 'Send it to the office.';
-  const shared = await tryShare(file, title, `${title}\n${to}`);
+  const shared = await shareSheet(file, title, `${title}\n${to}`);
   if (shared !== null) return shared;
   download(file);
   return (await ask('Your package is saved', `It is called "${file.name}". Attach it to an email. ${to}`, [
@@ -97,7 +108,7 @@ export async function exportBackup() {
   const now = new Date();
   const file = new File([buildPackage(jobs, { tech: settings.techName, appVersion: APP_VERSION, now, settings })],
     packageName(`${settings.techName}_backup`, now), { type: 'application/zip' });
-  if ((await tryShare(file, 'Write-up backup')) === null) download(file);
+  if ((await shareSheet(file, 'Write-up backup', 'Write-up backup')) === null) download(file);
 }
 
 // Reads a package (.zip) or an old-style backup (.json) → { jobs, settings? }. Plain errors.

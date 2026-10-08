@@ -92,6 +92,9 @@
     .row > .check { flex: none; margin-top: 0; }               /* S20: N/A beside its box */
     .field > .na-reason { margin-top: 8px; }
     .nickname input { font-weight: 700; }
+    .home .version { text-align: center; margin: 32px 0 8px; }
+    .note.gps-status { background: var(--ok-bg); margin-top: 8px; }   /* FR-22: "📍 GPS pin saved" (green, not a warning) */
+    .gps-status p { margin: 4px 0; }
     .na .na-reason { flex: 1 1 200px; }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 6px; font: inherit; font-weight: 600;
@@ -126,11 +129,25 @@
     .banner { background: var(--ok-bg); color: var(--ink); padding: 12px 16px; }
     .banner p { margin: 0 0 8px; font-weight: 600; }
     .part { border: 1px dashed var(--line); border-radius: 10px; padding: 4px 12px; margin: 10px 0; }
-    .part-head { display: flex; justify-content: space-between; align-items: center; }
+    /* FR-20: a part line folds up under its header (the whole header is the tap target). */
+    .part-head { display: flex; gap: 10px; align-items: center; min-height: 52px; cursor: pointer; list-style: none; }
+    .part-head::-webkit-details-marker { display: none; }
+    .part-head::before { content: '▸'; font-size: 20px; transition: transform .15s; }
+    .part[open] > .part-head::before { transform: rotate(90deg); }
+    .part-name { flex: 1; display: grid; min-width: 0; }
+    .part-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .part-remove { margin: 0 0 4px; }
     .thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
     .thumbs figure { margin: 0; display: grid; gap: 4px; }
     .thumbs img { width: 120px; height: 90px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
-    .sigpad { display: block; width: 100%; max-width: 600px; aspect-ratio: 600 / 180; height: auto; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; touch-action: none; }
+    .sigpad { display: block; width: 100%; max-width: 600px; aspect-ratio: 600 / 180; height: auto; border: 1.5px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; } /* S24: display only, so the page scrolls over it */
+    /* FR-23: "Clear this signature?" sits in the middle of the pad, upright; Yes is big and red. */
+    .bigpad { --bad: #dc2626; }
+    .bigpad-confirm { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgb(15 23 42 / .55); padding: 16px; }
+    .bigpad-confirm-card { background: #fff; color: #111827; border-radius: 16px; padding: 20px; width: min(100%, 340px); display: grid; gap: 10px; text-align: center; }
+    .bigpad-confirm-card p { margin: 0; }
+    .bigpad-confirm-q { font-size: 22px; font-weight: 800; }
+    .btn.danger-solid { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 800; min-height: 64px; }
     .sheet {
       position: fixed; inset: auto 0 0 0; z-index: 20; max-height: 75vh; overflow: auto; background: var(--card);
       border-top-left-radius: 16px; border-top-right-radius: 16px; padding: 12px 16px calc(env(safe-area-inset-bottom) + 16px);

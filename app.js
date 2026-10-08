@@ -82,8 +82,23 @@ async function renderHome(settings) {
         return h('section', {},
           h('h2', { text: `${title} (${list.length})` }),
           h('ul', { class: 'jobs' }, list.map((j) => jobRow(j, jobs))));
-      })));
+      }),
+      versionLine()));
 }
+
+// "App version: 2026.10.07-1832": the name of the offline copy this phone is running. Shown
+// small at the bottom of the job list and in Settings, so anyone can check an update arrived.
+function versionLine() {
+  const line = h('p', { class: 'muted small version', text: 'App version: …' });
+  Promise.resolve(window.caches?.keys()).then((keys) => {
+    line.textContent = `App version: ${keys?.find((k) => k.startsWith('fw-'))?.slice(3) || 'not installed yet'}`;
+  }).catch(() => {});
+  return line;
+}
+
+// A part line is named by its description (S21), or its number until one is typed.
+const partName = (p, i) => String(p.description ?? '').trim() || `Part ${i + 1}`;
+const lineMath = (p) => `${p.qty || 0} × $${(+p.price || 0).toFixed(2)} = $${((+p.qty || 0) * (+p.price || 0)).toFixed(2)}`;
 
 function jobRow(job, jobs) {
   const v = job.values;
@@ -145,8 +160,7 @@ function renderSettings(settings) {
   }
 
   function fullSettings() {
-    const version = h('p', { class: 'muted small', text: 'App version: …' });
-    caches?.keys().then((keys) => { version.textContent = `App version: ${keys.find((k) => k.startsWith('fw-'))?.slice(3) || 'not installed yet'}`; }).catch(() => {});
+    const version = versionLine();
     return [
       input('techName', 'Your name', { autocomplete: 'name', required: true }),
       input('officeEmail', 'Office email (your jobs go here)', { type: 'email', inputmode: 'email' }),
@@ -228,6 +242,10 @@ async function renderEditor(id, settings) {
   };
 
   const ctx = () => jobContext(job, others);
+  // FR-20: which part lines are unfolded (screen only, never saved). On opening, lines with
+  // something missing start open and finished lines start folded.
+  const startProbs = validateJob(job, ctx());
+  const openParts = new WeakSet(job.parts.filter((p, i) => startProbs.some((q) => q.key.startsWith(`part-${i}-`))));
 
   // Re-show error text and the bottom bar without rebuilding inputs (keeps focus/keyboard).
   function refresh() {
@@ -257,14 +275,30 @@ async function renderEditor(id, settings) {
       odo.hidden = job.odo_confirm == null && !(lastUnitMileage != null && /^\d+$/.test(job.values.unit_mileage || '') && +job.values.unit_mileage < lastUnitMileage);
     }
     for (const el of $app.querySelectorAll('[data-linetotal]')) {
-      const p = job.parts[+el.dataset.linetotal] || {};
-      el.textContent = `Line total: ${p.qty || 0} × $${(+p.price || 0).toFixed(2)} = $${((+p.qty || 0) * (+p.price || 0)).toFixed(2)}`;
+      el.textContent = `Line total: ${lineMath(job.parts[+el.dataset.linetotal] || {})}`;
+    }
+    // Fold-up part headers (FR-20): name, sums and the "to do" count, kept live while typing.
+    for (const el of $app.querySelectorAll('[data-part-count]')) {
+      const i = +el.dataset.partCount;
+      const p = job.parts[i] || {};
+      const n = probs.filter((q) => q.key.startsWith(`part-${i}-`)).length;
+      // Reason: only touch text that changed. Replacing the header's text while a finger is on
+      // it (the tap blurs a box, which runs this) makes Safari drop the tap.
+      const put = (node, text) => { if (node.textContent !== text) node.textContent = text; };
+      put(el, n ? `${n} to do` : '✓');
+      el.className = `count ${n ? 'warn' : 'ok'}`;
+      put($app.querySelector(`[data-part-title="${i}"]`), partName(p, i));
+      // The number moves to the second line once the description names the part.
+      put($app.querySelector(`[data-part-sub="${i}"]`), `${partName(p, i) === `Part ${i + 1}` ? '' : `Part ${i + 1} · `}${lineMath(p)}`);
     }
     for (const el of $app.querySelectorAll('[data-hint]')) {
       const hint = lengthHint(allFields().find((x) => x.id === el.dataset.hint), job.values[el.dataset.hint]);
       el.textContent = hint.text;
       el.className = `hint ${hint.ok ? 'ok' : ''}`;
     }
+    // Keep the GPS box in step while the address is typed (replacing it never touches the input).
+    const gpsBox = $app.querySelector('.gps-status');
+    if (gpsBox) gpsBox.replaceWith(gpsStatus());
     const c = computed(job);
     $app.querySelector('#totals').textContent = [
       c.hours != null && `${c.hours} h`, c.miles != null && `${c.miles} mi`, `parts $${c.partsTotal.toFixed(2)}`,
@@ -301,6 +335,8 @@ async function renderEditor(id, settings) {
   function jumpTo(key) {
     const el = $app.querySelector(`[data-key="${CSS.escape(key)}"]`);
     if (!el) return;
+    const fold = el.closest('details.part');
+    if (fold) fold.open = true; // a gap in a folded part line
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.querySelector('input:not([type=checkbox]):not([hidden]), textarea, select, canvas, button')?.focus({ preventScroll: true });
   }
@@ -425,7 +461,7 @@ async function renderEditor(id, settings) {
         ' Check digit fails but I double-checked it against the plate (needs VIN plate photo)'));
     }
     if (isNA && locked) wrap.append(h('div', { class: 'muted', text: `N/A: ${job.na[f.id]}` }));
-    if (f.id === 'address') { const g = gpsConfirm(); if (g) wrap.append(g); }
+    if (f.id === 'address') wrap.append(...[gpsStatus(), gpsConfirm()].filter(Boolean));
     // Photos that prove this field sit right under it (FR-10).
     const photos = PHOTO_SLOTS.filter((s) => s.for === f.id).map(slotWidget);
     return photos.length ? h('div', { class: 'with-photos' }, wrap, ...photos) : wrap;
@@ -486,6 +522,8 @@ async function renderEditor(id, settings) {
       job.gps = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: pos.coords.accuracy, at: new Date().toISOString() };
       const found = settings.gpsLookup === false ? null : await lookupAddress(job.gps.lat, job.gps.lng);
       if (closed) { if (await store.getJob(job.id)) await store.saveJob(job).catch(saveFailed); return; } // A-08 rule
+      // FR-22: why there's no address, so the status box can say it plainly.
+      job.gps.no_address = found ? undefined : settings.gpsLookup === false ? 'off' : !navigator.onLine ? 'offline' : 'none';
       if (found) {
         setInPlace('address', found.address);
         if (found.city) setInPlace('city', found.city);
@@ -497,19 +535,58 @@ async function renderEditor(id, settings) {
         $app.querySelector('.gps-confirm')?.scrollIntoView({ block: 'center' });
       } else {
         save();
-        btn.textContent = '📍 GPS saved';
+        rerender(); // shows "📍 GPS pin saved" + "use my GPS pin as the address"
         toast(settings.gpsLookup === false ? 'Your location is saved. Please type the address.'
           : !navigator.onLine ? 'No signal. Your location is saved. Please type the address.'
-            : 'Could not find the address. Your location is saved. Please type it.');
+            : 'No street address here. Your GPS pin is saved.');
       }
     }, () => { btn.textContent = '📍 Use my location'; toast('Could not get your location. Please type the address.'); }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+  }
+
+  // FR-22 (S22): after a GPS tap the tech always sees that the pin is saved, and whether an
+  // address is saved too. No address nearby is fine: one tap uses the pin as the answer.
+  function gpsStatus() {
+    const g = job.gps;
+    if (!g) return null;
+    const pin = `${g.lat.toFixed(5)}, ${g.lng.toFixed(5)}`;
+    const when = new Date(g.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const addr = String(job.values.address ?? '').trim();
+    let second = null;
+    if (job.na.address != null) {
+      second = h('p', {}, h('strong', { text: '🏠 No street address.' }), ' The GPS pin is the location.');
+    } else if (addr && !(job.address_from_gps && !job.address_confirmed)) {
+      second = h('p', {}, h('strong', { text: '🏠 Address saved ✓' }), ` ${[addr, job.values.city].filter(Boolean).join(', ')}`);
+    } else if (!addr && g.no_address) {
+      second = [
+        h('p', {
+          text: {
+            offline: 'No signal to look up the address. Your GPS pin is saved. Type the address, or use the pin.',
+            off: 'Address lookup is off. Your GPS pin is saved. Type the address, or use the pin.',
+          }[g.no_address] || 'No street address found here. That\'s OK. Your GPS pin is saved.',
+        }),
+        !locked && h('button', {
+          class: 'btn', type: 'button', text: '📍 Use my GPS pin as the address',
+          onclick: () => {
+            const why = `No street address here. GPS pin ${pin}`;
+            job.na.address = why;
+            if (!String(job.values.city ?? '').trim()) job.na.city = why;
+            touched.add('address');
+            save();
+            rerender();
+          },
+        }),
+      ];
+    }
+    return h('div', { class: 'gps-status note ok' },
+      h('p', {}, h('strong', { text: '📍 GPS pin saved ✓' }), ` ${pin} (±${Math.round(g.acc)} m) · ${when}`),
+      second);
   }
 
   // "Is this the right place?" — shown until the tech confirms or fixes a GPS-filled address.
   function gpsConfirm() {
     const g = job.address_from_gps;
     if (!g || locked) return null;
-    if (job.address_confirmed) return h('p', { class: 'hint ok', text: 'Address checked' });
+    if (job.address_confirmed) return null; // the GPS box now says "🏠 Address saved ✓"
     return h('div', { class: 'gps-confirm note' },
       h('p', {}, h('strong', { text: '📍 Is this the right place?' })),
       h('p', { text: [g.address, g.city].filter(Boolean).join(', ') }),
@@ -526,9 +603,17 @@ async function renderEditor(id, settings) {
     const box = h('div', { class: 'parts', 'data-key': 'parts' });
     if (!job.no_parts) {
       job.parts.forEach((p, i) => {
-        box.append(h('div', { class: 'part' },
-          h('div', { class: 'part-head' }, h('strong', { text: `Part ${i + 1}` }),
-            !locked && h('button', { class: 'btn ghost small', type: 'button', text: 'Remove', onclick: () => { job.parts.splice(i, 1); save(); rerender(); } })),
+        // FR-20 (S21): each line folds up under a header named by its description; the header
+        // keeps its "to do" count (filled in by refresh) so a folded line never hides a gap.
+        box.append(h('details', {
+          class: 'part', 'data-part': i, open: openParts.has(p),
+        },
+          h('summary', { class: 'part-head' },
+            h('span', { class: 'part-name' },
+              h('strong', { 'data-part-title': i, text: partName(p, i) }),
+              h('span', { class: 'muted small', 'data-part-sub': i })),
+            h('span', { class: 'count', 'data-part-count': i })),
+          !locked && h('button', { class: 'btn ghost small part-remove', type: 'button', text: 'Remove this part', onclick: () => { job.parts.splice(i, 1); save(); rerender(); } }),
           PART_COLUMNS.map((c) => h('div', { class: 'field', 'data-key': `part-${i}-${c.id}` },
             h('label', { class: 'label', for: `part-${i}-${c.id}`, text: c.label }),
             h('input', {
@@ -556,7 +641,20 @@ async function renderEditor(id, settings) {
             list: (p.receipt_photos ||= []), multiple: true, naBag: p, naKey: 'receipt_na',
           })));
       });
-      if (!locked) box.append(h('button', { class: 'btn', type: 'button', text: '+ Add part', onclick: () => { job.parts.push({}); save(); rerender(); } }));
+      if (!locked) {
+        box.append(h('button', {
+          class: 'btn', type: 'button', text: '+ Add part',
+          // The new line opens; the others fold so the list stays short (S21).
+          onclick: () => {
+            const p = {};
+            job.parts.push(p);
+            for (const d of $app.querySelectorAll('details.part')) d.open = false;
+            openParts.add(p);
+            save();
+            rerender();
+          },
+        }));
+      }
     }
     if (!locked && job.parts.length === 0) {
       box.append(h('label', { class: 'check' },
@@ -565,6 +663,7 @@ async function renderEditor(id, settings) {
     } else if (job.no_parts) {
       box.append(h('p', { class: 'muted', text: 'No parts used.' }));
     }
+    box.querySelectorAll('details.part').forEach((d, i) => { d.jobPart = job.parts[i]; }); // not `part`: that name is built into every element
     box.append(h('div', { class: 'err' }));
     return box;
   }
@@ -626,31 +725,45 @@ async function renderEditor(id, settings) {
   function signaturesSection() {
     return h('div', { class: 'sigs' }, SIGNATURES.map((s) => {
       const key = `sig-${s.id}`;
-      const canvas = h('canvas', { class: 'sigpad', width: 600, height: 180, tabindex: 0, 'aria-label': `${s.label} pad` });
+      const signed = !!job.signatures[s.id];
+      // FR-23 (S24): signing happens only in the big pad, so a finger scrolling past the small
+      // box can't draw. The small box just shows the signature; tapping it opens the big pad.
+      const open = () => !locked && openBigPad({
+        label: s.label,
+        existing: job.signatures[s.id],
+        onSave: (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); rerender(); },
+        onTooSmall: () => toast('Keep going. Sign a bit bigger.'),
+        onLockedTouch: () => toast('Already signed. Tap Clear to sign again.'),
+      });
+      const canvas = h('canvas', {
+        class: 'sigpad', width: 600, height: 180, tabindex: 0, 'aria-label': `${s.label}${signed ? ' (signed)' : ''}`,
+        onclick: open, onkeydown: (e) => { if (e.key === 'Enter') open(); },
+      });
       const wrap = h('div', { class: 'field', 'data-key': key },
-        h('span', { class: 'label', text: s.label }),
+        h('span', { class: 'label' }, s.label, ' ', signed && h('span', { class: 'badge ok', text: '✓ Signed' })),
         canvas,
         !locked && h('div', { class: 'row' },
-          // FR-18: sign big, sideways, without the tiny box.
-          h('button', {
-            class: 'btn small', type: 'button', text: '⤢ Enlarge',
-            onclick: () => openBigPad({
-              label: s.label,
-              onSave: (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); rerender(); },
-              onTooSmall: () => toast('Keep going. Sign a bit bigger.'),
-            }),
-          }),
-          h('button', { class: 'btn ghost small', type: 'button', text: 'Clear', onclick: () => { delete job.signatures[s.id]; save(); rerender(); } })),
+          h('button', { class: 'btn small', type: 'button', text: signed ? '⤢ Enlarge (view or redo)' : '⤢ Enlarge to sign', onclick: open })),
         h('div', { class: 'err' }));
-      setupSigPad(canvas, job.signatures[s.id], locked,
-        (dataUrl) => { job.signatures[s.id] = dataUrl; touched.add(key); save(); refresh(); },
-        () => toast('Keep going. Sign a bit bigger.'));
+      setupSigPad(canvas, job.signatures[s.id], true);
+      if (!signed && !locked) {
+        const c = canvas.getContext('2d');
+        c.fillStyle = '#94a3b8';
+        c.font = '28px system-ui, sans-serif';
+        c.textAlign = 'center';
+        c.fillText('Tap to sign ✍', 300, 100);
+      }
       return wrap;
     }));
   }
 
   function rerender() {
     const scroll = window.scrollY;
+    // Reason: read which part lines are unfolded from the screen itself (each line holds its
+    // part), not from 'toggle' events, which Safari can deliver after a redraw has started.
+    for (const d of $app.querySelectorAll('details.part')) {
+      if (d.open) openParts.add(d.jobPart); else openParts.delete(d.jobPart);
+    }
     build();
     window.scrollTo(0, scroll);
   }
