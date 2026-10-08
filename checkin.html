@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Write-Up App Check-In</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: one column like a service write-up sheet on a clipboard; numbered questions so answers can be quoted back ("Q9: $95/hr"). */
+  :root {
+    --bg: #eef1f4;
+    --sheet: #ffffff;
+    --ink: #17202a;
+    --muted: #5a6573;
+    --line: #cfd6de;
+    --accent: #c2410c;
+    --accent-ink: #ffffff;
+    --soft: #fff1e8;
+    --ok: #2b7a3e;
+    --warn: #9a4500;
+    --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --body: "Barlow", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10151b; --sheet: #18202a; --ink: #e6ebf0; --muted: #9aa6b4; --line: #2e3a47;
+      --accent: #ff7a3d; --accent-ink: #1a0d05; --soft: #2a1d15; --ok: #6fd28a; --warn: #ffb066;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10151b; --sheet: #18202a; --ink: #e6ebf0; --muted: #9aa6b4; --line: #2e3a47;
+    --accent: #ff7a3d; --accent-ink: #1a0d05; --soft: #2a1d15; --ok: #6fd28a; --warn: #ffb066;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font: 17px/1.5 var(--body); padding: 24px 16px 110px; }
+  .wrap { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; }
+  header.top { display: grid; gap: 8px; }
+  .tag { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+  h1 { font: 700 clamp(34px, 7vw, 48px)/1.02 var(--display); margin: 0; text-wrap: balance; text-transform: uppercase; letter-spacing: .01em; }
+  .lede { margin: 0; color: var(--muted); max-width: 60ch; }
+  .lede a { color: var(--accent); font-weight: 600; word-break: break-word; }
+  section.sheet { background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; padding: 20px 18px; display: grid; gap: 22px; min-width: 0; }
+  section.sheet > h2 { font: 700 26px/1.1 var(--display); text-transform: uppercase; margin: 0; padding-bottom: 10px; border-bottom: 3px solid var(--accent); text-wrap: balance; }
+  .intro { margin: -8px 0 0; color: var(--muted); max-width: 62ch; }
+  .q { display: grid; gap: 8px; min-width: 0; }
+  .q > .label { font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+  .num { font: 500 13px var(--mono); color: var(--muted); flex: none; min-width: 2.6em; }
+  .hint { font-size: 14px; color: var(--muted); margin: -4px 0 0 calc(2.6em + 10px); }
+  .ans { margin-left: calc(2.6em + 10px); display: grid; gap: 8px; min-width: 0; }
+  @media (max-width: 480px) { .ans, .hint { margin-left: 0; } }
+  input[type=text], textarea {
+    width: 100%; font: inherit; color: var(--ink); background: var(--bg); border: 1.5px solid var(--line);
+    border-radius: 6px; padding: 10px 12px; min-height: 46px;
+  }
+  textarea { min-height: 84px; resize: vertical; }
+  input:focus-visible, textarea:focus-visible, button:focus-visible, .chip input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { position: relative; }
+  .chip input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .chip span { display: inline-block; padding: 9px 14px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--bg); cursor: pointer; font-weight: 500; }
+  .chip input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .pick { display: inline-flex; gap: 8px; align-items: center; padding: 8px 14px 8px 8px; border: 1.5px solid var(--line); border-radius: 999px; background: var(--bg); font: 500 16px var(--body); min-height: 44px; }
+  .pick b { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; border: 1.5px dashed var(--line); font: 500 13px var(--mono); }
+  .pick[aria-pressed="true"] { border-color: var(--accent); }
+  .pick[aria-pressed="true"] b { background: var(--accent); color: var(--accent-ink); border: 0; }
+  .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .pair label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+  .rate { display: grid; gap: 8px; padding-top: 14px; border-top: 1px dashed var(--line); }
+  .rate .what { font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+  .rate .what small { display: block; font-weight: 400; color: var(--muted); font-size: 14px; }
+  .bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--sheet); border-top: 1px solid var(--line);
+  }
+  .bar .in { max-width: 720px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { font: 600 16px var(--body); border-radius: 6px; padding: 12px 18px; min-height: 48px; cursor: pointer; border: 1.5px solid var(--line); background: var(--sheet); color: var(--ink); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  #status { flex: 1 1 220px; font-size: 14px; color: var(--muted); min-width: 0; }
+  #status.ok { color: var(--ok); }
+  #status.warn { color: var(--warn); }
+  .note { background: var(--soft); border-radius: 6px; padding: 12px 14px; font-size: 15px; margin: 0; }
+  #copybox { width: 100%; min-height: 160px; font: 13px/1.4 var(--mono); }
+</style>
+<style>body { margin: 0; }</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="tag">Rainier · Write-Up app · check-in</div>
+    <h1>Help us finish your write-up app</h1>
+    <p class="lede">Some questions so the app fits how your shop really works, plus a quick thumbs up or down on what's built. <strong>None of it is required.</strong> Answer what you can, skip the rest, and come back whenever. Your answers stay on this phone as you type. Even a few answers help.</p>
+    <p class="lede">⭐ <strong>Short on time? Just do the ⭐ ones.</strong> Try the app: <a href="https://johndoegalt.github.io/field-writeup/" target="_blank" rel="noopener">johndoegalt.github.io/field-writeup</a></p>
+    <p class="note"><strong>No account or sign-in needed.</strong> When you're done (or done for now), tap <strong>Copy my answers</strong> at the bottom and paste them into a text or email to Nick.</p>
+  </header>
+  <div id="form" style="display:grid;gap:20px"></div>
+  <section class="sheet" aria-labelledby="h-send">
+    <h2 id="h-send">Send it</h2>
+    <div class="q"><label class="label" for="who"><span class="num">—</span><span>Your name</span></label><div class="ans"><input type="text" id="who" autocomplete="name"></div></div>
+    <p class="note">Tap <strong>Copy my answers</strong> at the bottom, then paste them into a text or email to Nick. That's it. This page doesn't send anything by itself.</p>
+    <textarea id="copybox" readonly hidden aria-label="Your answers as text"></textarea>
+  </section>
+</div>
+
+<div class="bar"><div class="in">
+  <button class="primary" type="button" id="copy">Copy my answers</button>
+  <span id="status" role="status">Done? Copy your answers and text them to Nick.</span>
+</div></div>
+
+<script>
+// The questions, as data: each renders as one numbered block. Ids are stable — saved answers key on them.
+const CH = (id, label, opts, hint, multi = false) => ({ id, label, opts, hint, kind: multi ? 'multi' : 'one' });
+const TX = (id, label, hint, long = false) => ({ id, label, hint, kind: long ? 'long' : 'text' });
+const SECTIONS = [
+  { title: 'Your crew and phones', qs: [
+    { id: 'crew', label: 'How many techs will use the app, and what phones do they have?', kind: 'pair',
+      fields: [['techs', 'Techs'], ['iphones', 'iPhones'], ['androids', 'Android phones']] },
+    CH('ownphone', 'Does each tech have their own phone?', ['Yes, each their own', 'Some share', 'No, phones are shared']),
+    CH('sendto', 'Where should finished write-ups go?', ['One office email', 'A different email per tech', 'Dropbox', 'Not sure yet'], 'Pick all that apply.', true),
+    TX('sendaddr', 'Which email address (or addresses)?', 'Example: office@yourshop.com'),
+    CH('dropbox', 'Does your company use Dropbox?', ['Yes, a business/team account', 'Yes, a regular account', 'No', 'Not sure']),
+    CH('dbxfiles', 'If jobs go to Dropbox, which would you rather have?', ['One file per job', 'One file per send (several jobs)', "Don't mind"],
+      'One file per job is easier to find later. One per send means fewer files.'),
+  ]},
+  { title: 'Jobs and billing', qs: [
+    CH('wo', 'Who gives a job its work order / invoice number?', ['The office, before the job', 'The tech, on site', "It doesn't matter"]),
+    CH('wosame', 'Is that the same number as the invoice in Invoice Simple?', ['Yes', 'No', 'Sometimes']),
+    CH('cost', 'On the parts list, "Cost/price" should be:', ['What I paid', 'What I charge the customer', 'Both, in two boxes']),
+    TX('markup', 'Do you mark parts up? By how much?', 'Example: 25%, or "depends on the part"'),
+    { id: 'rates', label: 'Your rates', kind: 'pair', hint: "Leave a box blank if you don't charge it.",
+      fields: [['labor', 'Labor ($/hr)'], ['callout', 'Call-out fee ($)'], ['mileage', 'Mileage ($/mile)']] },
+    CH('estimates', 'Do customers need an estimate or approval before you start?', ['Always', 'Sometimes', 'Never']),
+    CH('isfeatures', 'Which Invoice Simple features do you really use?', ['Emailing invoices', 'Payment reminders', 'Card / bank payments', 'Estimates', 'Expenses and receipts', 'Reports / bookkeeping', 'Client statements'], 'Pick all that apply.', true),
+  ]},
+  { title: 'Making the invoice', intro: 'The app has Copy buttons so you can paste a finished job into Invoice Simple instead of retyping it. Tell us exactly what you type there, so the buttons match your steps (and so anything that replaces Invoice Simple later fits too).', qs: [
+    CH('inv_who', 'Who types the invoices?', ['Me', 'Someone in the office', 'Each tech, for their own jobs'], 'Pick all that apply.', true),
+    CH('inv_device', 'Where do you make invoices?', ['Invoice Simple on a phone', 'On a tablet', 'On a computer (website)'], 'Pick all that apply.', true),
+    CH('inv_when', 'When do you usually make the invoice?', ['At the truck, right after the job', 'Back at the shop, same day', 'End of the week, in a batch', 'It varies']),
+    CH('inv_fields', 'Which of these do you fill in on an invoice?', ['Customer / company name', 'Customer email', 'Customer phone', 'Customer address', 'Invoice number', 'Invoice date', 'Due date / payment terms', 'PO number', 'Unit #, plate or VIN', 'Labor line', 'One line per part', 'Service call / trip charge', 'Mileage charge', 'Tax', 'Discount', 'Notes to the customer', 'Photos', 'Signature'],
+      'Pick all that apply.', true),
+    CH('inv_clients', 'Your customers in Invoice Simple:', ['I pick them from my saved customer list', 'I type them in each time', 'Mix of both']),
+    CH('inv_items', 'Parts and labor in Invoice Simple:', ['I pick them from my saved items list', 'I type each line in', 'Mix of both']),
+    CH('inv_labor', 'How do you put labor on the invoice?', ['Hours × my rate', 'A flat price for the job', 'Labor and parts together as one price']),
+    CH('inv_parts', 'How do parts go on the invoice?', ['Each part on its own line', 'One "Parts" line with the total', 'Parts folded into the labor price']),
+    CH('inv_tax', 'Do you charge sales tax?', ['On parts only', 'On parts and labor', 'No tax', 'Not sure']),
+    CH('inv_send', 'How does the customer get the invoice?', ['Emailed from Invoice Simple', 'Texted', 'Printed / handed over', 'Through a customer portal or fleet system'], 'Pick all that apply.', true),
+    CH('inv_order', 'For each job the app now gives Copy buttons in this order: Customer (with contact, phone, email) → Invoice # → Labor line → one line per part → Service truck miles → Parts subtotal → Notes (unit, plate, VIN, mileage). Does that match how you fill it in?', ['Yes, that works', 'Mostly (say what to change below)', 'No (say below)']),
+    { id: 'inv_seq', kind: 'order', label: 'Tap the boxes in the order you fill them in on an invoice.',
+      hint: 'Each tap gets the next number. Tap again to take it out. Skip the ones you never use. This is the order your Copy buttons will come in.',
+      opts: ['Customer name', 'Customer email', 'Customer phone', 'Customer address', 'Invoice number', 'Invoice date', 'Due date / terms', 'PO number', 'Labor', 'Parts', 'Trip / service charge', 'Mileage charge', 'Tax', 'Notes', 'Unit # / plate / VIN', 'Photos', 'Signature'] },
+    CH('inv_copystyle', 'What would make copying into Invoice Simple fastest for you?', ['A Copy button for each box, in my order', 'One "Copy everything" I paste into the notes', 'Copy the line items as a block', 'Whatever is fewest taps'], 'Pick all that apply.', true),
+    TX('inv_steps', 'Walk us through one invoice, step by step: what you type into each box, and where you get it from today.', 'Example: "Pick the customer, type the WO # as the invoice #, add 2.5 hrs labor at $95, add each part with my price, add the trip charge, put the unit # and VIN in notes, email it."', true),
+    TX('inv_time', 'About how long does one invoice take you now?', 'Example: 10 minutes'),
+    TX('inv_wish', "If you could change one thing about invoicing, what would it be? Anything Invoice Simple can't do that you wish it could?", '', true),
+  ], tail: '📸 Easiest of all: text Nick a screenshot of the Invoice Simple screen where you type an invoice, and one of a finished invoice (blur prices if you like). That shows us your boxes and their order faster than any answer.' },
+  { title: 'The write-up form', qs: [
+    CH('initials', "When the customer or driver isn't at the truck, who fills the initials box?", ['The driver', 'Nobody: the tech writes N/A and why', "Someone at the customer's office", 'Other (say below)']),
+    CH('missing', 'Which of these can honestly be missing on some jobs?', ['Company name', 'Contact name', 'Phone', 'Email', 'Unit number', 'License plate', 'VIN', 'Unit mileage', 'Test results', 'Customer instructions', 'Follow-up needed', 'Street address', 'Parts receipt photo', 'Customer initials'],
+      "Every box has an N/A option with a reason. This tells us which ones that's normal for.", true),
+    TX('formmore', 'Anything your paper write-up has that the app is missing? Anything it asks that you never need?', '', true),
+  ]},
+  { title: 'What we built: how is it?', rates: [
+    ['r_fill', 'Filling out a job', 'Boxes, phone and mileage formatting, "Now" for times'],
+    ['r_gate', '"N missing: show me"', "Can't finish a job until everything's there"],
+    ['r_photos', 'Photos', 'Take a photo or pick one from your phone'],
+    ['r_sign', 'Signatures', 'Tap the box, sign big on the full screen'],
+    ['r_gps', 'GPS location and address', '"GPS pin saved" and "Address saved"'],
+    ['r_parts', 'Parts list', 'Each part folds up under its description'],
+    ['r_send', 'Sending jobs to the office', '"Package ready", then Send it (Mail, Dropbox…)'],
+    ['r_office', 'Office view', 'Job list, job report, Copy buttons for Invoice Simple'],
+    ['r_keep', 'Packages and Archive', 'Sent work kept 30 days; delete by hand anytime'],
+  ]},
+  { title: 'Anything else', qs: [
+    TX('headache', "What's the biggest headache with write-ups today?", '', true),
+    TX('confusing', 'Anything in the app confusing, slow or annoying?', '', true),
+  ]},
+];
+const RATE_OPTS = ['👍 Works for me', '😐 OK', '👎 Needs work'];
+// The few answers that unblock the most work, for a short visit.
+const STAR = new Set(['crew', 'sendto', 'cost', 'rates', 'inv_seq']);
+
+const KEY = 'rainier-checkin-draft';
+let n = 0;
+const el = (tag, attrs = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'text') e.textContent = v; else if (k === 'class') e.className = v; else e.setAttribute(k, v);
+  }
+  e.append(...kids.filter(Boolean));
+  return e;
+};
+const chips = (name, opts, multi) => el('div', { class: 'chips', role: multi ? 'group' : 'radiogroup' },
+  ...opts.map((o, i) => el('label', { class: 'chip' },
+    el('input', { type: multi ? 'checkbox' : 'radio', name, value: o, id: `${name}-${i}` }), el('span', { text: o }))));
+
+// Tap-in-order picker: the group keeps the chosen order in data-order (JSON array); each chosen
+// button shows its place. Toggle buttons with aria-pressed, so screen readers hear the state.
+function orderPicker(id, opts) {
+  const box = el('div', { class: 'chips order', id, 'data-order': '[]', role: 'group' });
+  const paint = () => {
+    const seq = JSON.parse(box.dataset.order);
+    for (const b of box.children) {
+      const at = seq.indexOf(b.dataset.v);
+      b.setAttribute('aria-pressed', at >= 0 ? 'true' : 'false');
+      b.querySelector('b').textContent = at >= 0 ? `${at + 1}` : '';
+    }
+  };
+  for (const o of opts) {
+    box.append(el('button', { type: 'button', class: 'pick', 'data-v': o, 'aria-pressed': 'false' }, el('b', { 'aria-hidden': 'true' }), el('span', { text: o })));
+  }
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('button.pick');
+    if (!b) return;
+    const seq = JSON.parse(box.dataset.order);
+    const at = seq.indexOf(b.dataset.v);
+    if (at >= 0) seq.splice(at, 1); else seq.push(b.dataset.v);
+    box.dataset.order = JSON.stringify(seq);
+    paint();
+    draft();
+  });
+  box.repaint = paint;
+  return box;
+}
+
+function block(q) {
+  const num = `Q${++n}`;
+  const typed = q.kind === 'text' || q.kind === 'long';
+  const ans = el('div', { class: 'ans' });
+  if (q.kind === 'one' || q.kind === 'multi') ans.append(chips(q.id, q.opts, q.kind === 'multi'));
+  if (q.kind === 'order') ans.append(orderPicker(q.id, q.opts));
+  if (q.kind === 'text') ans.append(el('input', { type: 'text', id: q.id }));
+  if (q.kind === 'long') ans.append(el('textarea', { id: q.id }));
+  if (q.kind === 'pair') {
+    ans.append(el('div', { class: 'pair' }, ...q.fields.map(([id, l]) =>
+      el('label', {}, l, el('input', { type: 'text', id: `${q.id}_${id}`, 'data-l': l, inputmode: 'decimal' })))));
+  }
+  return el('div', { class: 'q', 'data-num': num, 'data-label': q.label },
+    el(typed ? 'label' : 'div', { class: 'label', ...(typed ? { for: q.id } : {}) }, el('span', { class: 'num', text: num }), el('span', { text: `${STAR.has(q.id) ? '⭐ ' : ''}${q.label}` })),
+    q.hint && el('p', { class: 'hint', text: q.hint }),
+    ans);
+}
+
+function rateBlock([id, what, sub]) {
+  const num = `Q${++n}`;
+  return el('div', { class: 'rate', 'data-num': num, 'data-label': what },
+    el('div', { class: 'what' }, el('span', { class: 'num', text: num }), el('div', {}, what, el('small', { text: sub }))),
+    chips(id, RATE_OPTS, false),
+    el('input', { type: 'text', id: `${id}_note`, placeholder: 'What would make it better? (optional)', 'aria-label': `${what}: comment` }));
+}
+
+const form = document.getElementById('form');
+SECTIONS.forEach((s, i) => {
+  const sec = el('section', { class: 'sheet', 'aria-labelledby': `h${i}` }, el('h2', { id: `h${i}`, text: s.title }),
+    s.intro && el('p', { class: 'intro', text: s.intro }));
+  (s.qs || []).forEach((q) => sec.append(block(q)));
+  (s.rates || []).forEach((r) => sec.append(rateBlock(r)));
+  if (s.tail) sec.append(el('p', { class: 'note', text: s.tail }));
+  form.append(sec);
+});
+
+// Answers <-> form. Keys: field ids for typed boxes, group names for picks (arrays for multi-picks).
+function collect() {
+  const out = {};
+  for (const f of document.querySelectorAll('#form input[type=text], #form textarea, #who')) if (f.value.trim()) out[f.id] = f.value.trim();
+  for (const f of document.querySelectorAll('#form input:checked')) {
+    if (f.type === 'checkbox') (out[f.name] ||= []).push(f.value); else out[f.name] = f.value;
+  }
+  for (const g of document.querySelectorAll('#form .order')) {
+    const seq = JSON.parse(g.dataset.order);
+    if (seq.length) out[g.id] = seq;
+  }
+  return out;
+}
+function fill(a) {
+  for (const [k, v] of Object.entries(a || {})) {
+    const f = document.getElementById(k);
+    if (f && (f.tagName === 'TEXTAREA' || f.type === 'text')) { f.value = v; continue; }
+    if (f?.classList.contains('order')) { f.dataset.order = JSON.stringify(Array.isArray(v) ? v : []); f.repaint(); continue; }
+    for (const box of document.getElementsByName(k)) box.checked = Array.isArray(v) ? v.includes(box.value) : box.value === v;
+  }
+}
+// A plain-text copy, numbered like the page, to paste into a text or email.
+function asText() {
+  const who = document.getElementById('who').value.trim();
+  const lines = [`Write-Up app check-in${who ? ` from ${who}` : ''}`, ''];
+  for (const q of document.querySelectorAll('#form [data-num]')) {
+    const vals = [];
+    const order = q.querySelector('.order');
+    if (order) JSON.parse(order.dataset.order).forEach((v, i) => vals.push(`${i + 1}. ${v}`));
+    for (const f of q.querySelectorAll('input, textarea')) {
+      if ((f.type === 'radio' || f.type === 'checkbox') && f.checked) vals.push(f.value);
+      if ((f.type === 'text' || f.tagName === 'TEXTAREA') && f.value.trim()) vals.push(`${f.dataset.l ? `${f.dataset.l}: ` : ''}${f.value.trim()}`);
+    }
+    if (vals.length) lines.push(`${q.dataset.num} ${q.dataset.label}`, `   ${vals.join(' · ')}`);
+  }
+  return lines.join('\n');
+}
+
+// A draft on this phone as he types (convenience only; it never reaches Nick by itself).
+const draft = () => { try { localStorage.setItem(KEY, JSON.stringify(collect())); } catch { /* private mode */ } };
+try { fill(JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { /* nothing kept */ }
+document.addEventListener('input', draft);
+document.addEventListener('change', draft);
+
+const status = document.getElementById('status');
+const say = (msg, cls = '') => { status.textContent = msg; status.className = cls; };
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const text = asText();
+  const box = document.getElementById('copybox');
+  box.value = text;
+  try { await navigator.clipboard.writeText(text); say('Copied. Paste it into a text or email to Nick.', 'ok'); }
+  catch { box.hidden = false; box.focus(); box.select(); say('Select the text below and copy it.', 'warn'); }
+});
+</script>
+
+</body>
+</html>
