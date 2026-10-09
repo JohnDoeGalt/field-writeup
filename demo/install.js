@@ -3,7 +3,7 @@ import { h, mount, hooks } from './ui.js';
 // ---------- install guide ----------
 // An iPhone keeps a Home Screen app's data apart from Safari's, so jobs typed in a Safari
 // tab would never show up in the installed app. On iPhone the guide comes first.
-export const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+export const isStandalone = () => true; // DEMO: treat as already installed
 export const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const isIOSSafari = () => isIOS() && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA/.test(navigator.userAgent);
 let installPrompt = null; // Android/Chrome one-tap install

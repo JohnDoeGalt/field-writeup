@@ -101,7 +101,7 @@ async function renderHome(settings) {
 function versionLine() {
   const line = h('p', { class: 'muted small version', text: 'App version: …' });
   Promise.resolve(window.caches?.keys()).then((keys) => {
-    line.textContent = `App version: ${keys?.find((k) => k.startsWith('fw-'))?.slice(3) || 'not installed yet'}`;
+    line.textContent = `App version: ${keys?.find((k) => k.startsWith('fw-'))?.slice(3) || '2026.10.08-1728'}`;
   }).catch(() => {});
   return line;
 }
